@@ -1,0 +1,159 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-nunito-sans);
+  --font-heading: var(--font-urbanist);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+}
+
+/* ─── M51 Design System ──────────────────────────────────────────────────── */
+/* Primærfarger: Dark #151313 · Red #FF3B3D · White #FFFFFF                  */
+/* Støttefarger: Teal · Green · Lime · Grey                                  */
+/* Fonter: Urbanist (titler) · Nunito Sans (brødtekst)                       */
+
+:root {
+  --radius: 0.75rem;
+
+  /* Bakgrunn og kort */
+  --background: #F9F9F9;       /* Grey 3 — sidelayout */
+  --foreground: #151313;       /* Dark */
+  --card: #ffffff;             /* White */
+  --card-foreground: #151313;
+  --popover: #ffffff;
+  --popover-foreground: #151313;
+
+  /* Primærfarge — Red 1 */
+  --primary: #FF3B3D;
+  --primary-foreground: #ffffff;
+
+  /* Sekundær — Teal 3 (lys) */
+  --secondary: #F2FAFA;
+  --secondary-foreground: #151313;
+
+  /* Muted — Grey 2 */
+  --muted: #E1DEDE;
+  --muted-foreground: #8F8D8D;  /* Grey 1 */
+
+  /* Aksent — Red 3 (veldig lys rød) */
+  --accent: #FFF2F2;
+  --accent-foreground: #FF3B3D;
+
+  --destructive: #FF3B3D;
+  --border: #E1DEDE;
+  --input: #E1DEDE;
+  --ring: #FF3B3D;
+
+  /* Graffarger — M51 fargeunivers */
+  --chart-1: #FF3B3D;   /* Red 1 */
+  --chart-2: #3C6E71;   /* Teal 1 */
+  --chart-3: #70AE6E;   /* Green 1 */
+  --chart-4: #BDED62;   /* Lime 1 */
+  --chart-5: #FEB7B7;   /* Red 2 */
+
+  /* Sidebar */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #151313;
+  --sidebar-primary: #FF3B3D;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #F9F9F9;
+  --sidebar-accent-foreground: #151313;
+  --sidebar-border: #E1DEDE;
+  --sidebar-ring: #FF3B3D;
+}
+
+.dark {
+  --background: #151313;       /* M51 Dark */
+  --foreground: #F9F9F9;       /* Grey 3 */
+  --card: #1E1C1C;             /* Litt lysere enn bakgrunn */
+  --card-foreground: #F9F9F9;
+  --popover: #1E1C1C;
+  --popover-foreground: #F9F9F9;
+
+  --primary: #FF3B3D;          /* Red 1 — samme */
+  --primary-foreground: #ffffff;
+
+  --secondary: #1E2F30;        /* Mørk teal */
+  --secondary-foreground: #F9F9F9;
+
+  --muted: #2A2828;
+  --muted-foreground: #8F8D8D; /* Grey 1 */
+
+  --accent: #2D1C1C;           /* Mørk rødtint */
+  --accent-foreground: #FF3B3D;
+
+  --destructive: #FF3B3D;
+  --border: #2A2828;
+  --input: #2A2828;
+  --ring: #FF3B3D;
+
+  --chart-1: #FF3B3D;
+  --chart-2: #3C6E71;
+  --chart-3: #70AE6E;
+  --chart-4: #BDED62;
+  --chart-5: #FEB7B7;
+
+  --sidebar: #1E1C1C;
+  --sidebar-foreground: #F9F9F9;
+  --sidebar-primary: #FF3B3D;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #2A2828;
+  --sidebar-accent-foreground: #F9F9F9;
+  --sidebar-border: #2A2828;
+  --sidebar-ring: #FF3B3D;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-nunito-sans), sans-serif;
+  }
+  /* Urbanist for all headings */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-urbanist), sans-serif;
+  }
+}
