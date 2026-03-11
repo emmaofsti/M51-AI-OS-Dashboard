@@ -114,7 +114,7 @@ async function searchContacts(after?: string) {
 
 // Fetch all HubSpot meeting activities from 2026 onwards
 async function searchMeetings(after?: string) {
-  const since2026 = new Date(2026, 0, 1).getTime().toString();
+  const since2026 = new Date("2025-12-31T23:00:00Z").getTime().toString(); // Jan 1 00:00 CET
   const body: any = {
     filterGroups: [
       {

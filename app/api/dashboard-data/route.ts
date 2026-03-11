@@ -4,6 +4,7 @@ import type { DashboardData } from "@/lib/mockData";
 import { OWNER_NAMES } from "@/lib/ownerNames";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // Vercel max for Hobby plan — HubSpot fetch can take 5–15s
 
 // --- Date range helpers ---
 // Use explicit UTC midnight for Norwegian "start of day" (CET = UTC+1 in winter)
