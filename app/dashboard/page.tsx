@@ -23,7 +23,7 @@ export default function DashboardPage() {
   const [isLive, setIsLive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState("30d");
-  const [dealFilter, setDealFilter] = useState<"all" | "ai-os">("all");
+  const [dealFilter, setDealFilter] = useState<"all" | "ai-os">("ai-os");
 
   const fetchData = useCallback(async (signal?: AbortSignal, forceRefresh = false) => {
     setLoading(true);
