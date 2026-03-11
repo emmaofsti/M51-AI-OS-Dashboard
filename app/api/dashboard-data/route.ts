@@ -241,16 +241,12 @@ export async function GET(request: NextRequest) {
       return MEETING_TITLE_PATTERN.test(title) && !MEETING_EXCLUDE_PATTERN.test(title);
     });
 
-    // When AI OS filter is active, further restrict meetings to those matching AI OS keywords
-    const filteredMeetings = dealFilter === "ai-os"
-      ? salesMeetings2026.filter((m: any) => AI_OS_PATTERN.test(m.properties.hs_meeting_title ?? ""))
-      : salesMeetings2026;
-
     // "Booket" = meeting was created/added to the calendar in this period
-    const meetingsThisPeriod = filteredMeetings.filter(
+    // Møte-KPI-ene (booket/gjennomført) bruker alltid alle salgsmøter uavhengig av deal-filter
+    const meetingsThisPeriod = salesMeetings2026.filter(
       (m: any) => bookedDate(m) >= meetingsFloor(periodStart)
     );
-    const meetingsPrevPeriod = filteredMeetings.filter(
+    const meetingsPrevPeriod = salesMeetings2026.filter(
       (m: any) => bookedDate(m) >= meetingsFloor(prevPeriodStart) && bookedDate(m) <= prevPeriodEnd
     );
 
@@ -303,7 +299,7 @@ export async function GET(request: NextRequest) {
         const dayEnd = new Date(day);
         dayEnd.setHours(23, 59, 59, 999);
         const label = day.toLocaleString("no", { weekday: "short" });
-        const count = filteredMeetings.filter((m: any) => {
+        const count = salesMeetings2026.filter((m: any) => {
           const d = bookedDate(m);
           return d >= AI_OS_MEETINGS_START && d >= day && d <= dayEnd;
         }).length;
@@ -315,7 +311,7 @@ export async function GET(request: NextRequest) {
         const mStart = new Date(2026, m, 1);
         const mEnd = new Date(2026, m + 1, 0, 23, 59, 59);
         const label = mStart.toLocaleString("no", { month: "short" });
-        const count = filteredMeetings.filter((mtg: any) => {
+        const count = salesMeetings2026.filter((mtg: any) => {
           const d = bookedDate(mtg);
           return d >= AI_OS_MEETINGS_START && d >= mStart && d <= mEnd;
         }).length;
@@ -334,7 +330,7 @@ export async function GET(request: NextRequest) {
         wEnd.setDate(wEnd.getDate() + 7);
         const { week: isoWeek, year: isoYear } = getISOWeekAndYear(wStart);
         const label = isoYear < now.getFullYear() ? `Uke ${isoWeek} '${String(isoYear).slice(2)}` : `Uke ${isoWeek}`;
-        const count = filteredMeetings.filter((m: any) => {
+        const count = salesMeetings2026.filter((m: any) => {
           const d = bookedDate(m);
           return d >= AI_OS_MEETINGS_START && d >= wStart && d < wEnd;
         }).length;
@@ -468,10 +464,10 @@ export async function GET(request: NextRequest) {
     // --- Meetings held: sales meetings where hs_timestamp is in the past ---
     // Using calendar data (HubSpot meeting activities) is more accurate than deal stages.
     // A meeting is "held" if it took place in the period (>= floor) AND hs_timestamp < now.
-    const meetingsHeldPeriod = filteredMeetings.filter(
+    const meetingsHeldPeriod = salesMeetings2026.filter(
       (m: any) => meetingDate(m) >= meetingsFloor(periodStart) && meetingDate(m) <= now
     );
-    const meetingsHeldPrev = filteredMeetings.filter(
+    const meetingsHeldPrev = salesMeetings2026.filter(
       (m: any) => meetingDate(m) >= meetingsFloor(prevPeriodStart) && meetingDate(m) <= prevPeriodEnd
     );
     // --- Closing Rate: Kunder vunnet / Møte gjennomført i perioden ---
