@@ -6,9 +6,15 @@ import { OWNER_NAMES } from "@/lib/ownerNames";
 export const dynamic = "force-dynamic";
 
 // --- Date range helpers ---
+// Use explicit UTC midnight for Norwegian "start of day" (CET = UTC+1 in winter)
+// This ensures consistent results regardless of where the server runs (local CET vs Vercel UTC)
+const YEAR_START_2026  = new Date("2025-12-31T23:00:00Z"); // Jan  1 00:00 CET
+const YEAR_START_2025  = new Date("2024-12-31T23:00:00Z"); // Jan  1 00:00 CET 2025
+const YEAR_END_2025    = new Date("2025-12-31T22:59:59Z"); // Dec 31 23:59 CET 2025
+
 function getDateRange(range: string) {
   const now = new Date();
-  const yearStart = new Date(2026, 0, 1);
+  const yearStart = YEAR_START_2026;
 
   let periodStart: Date;
   let prevPeriodStart: Date;
@@ -28,8 +34,8 @@ function getDateRange(range: string) {
     prevPeriodStart.setDate(prevPeriodStart.getDate() - 90);
   } else if (range === "year") {
     periodStart = yearStart;
-    prevPeriodStart = new Date(2025, 0, 1);
-    prevPeriodEnd = new Date(2025, 11, 31, 23, 59, 59);
+    prevPeriodStart = YEAR_START_2025;
+    prevPeriodEnd   = YEAR_END_2025;
   } else {
     // default 30d
     periodStart = new Date(now);
@@ -137,7 +143,7 @@ export async function GET(request: NextRequest) {
     const range = request.nextUrl.searchParams.get("range") || "30d";
     const dealFilter = request.nextUrl.searchParams.get("dealFilter") || "all";
     const { periodStart, prevPeriodStart, prevPeriodEnd, now } = getDateRange(range);
-    const yearStart = new Date(2026, 0, 1);
+    const yearStart = YEAR_START_2026;
     const weekStart = startOfWeek(now); // used for meetingsOverTime chart
 
     // Filter locally: include deals relevant to 2026.
@@ -226,7 +232,7 @@ export async function GET(request: NextRequest) {
     // Meetings before this date match the same keywords ("demo", "AI", "agenter", "M51")
     // but are unrelated M51 agency/marketing work — not AI OS pipeline activity.
     // We clamp all meeting-based metrics to this floor so 90d/year views aren't inflated.
-    const AI_OS_MEETINGS_START = new Date(2026, 1, 16); // Mon 16. feb 2026 (week 8)
+    const AI_OS_MEETINGS_START = new Date("2026-02-15T23:00:00Z"); // Feb 16 00:00 CET (UTC+1)
     const meetingsFloor = (d: Date) => d > AI_OS_MEETINGS_START ? d : AI_OS_MEETINGS_START;
 
     const salesMeetings2026 = meetings.filter((m: any) => {
