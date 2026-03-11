@@ -56,7 +56,7 @@ export function DashboardHeader({
         </div>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">
-            M51 OS Dashboard
+            M51 AI OS Dashboard
           </h1>
           <p className="text-sm text-muted-foreground">
             Revenue, meetings, and conversion metrics

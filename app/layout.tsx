@@ -15,7 +15,7 @@ const nunitoSans = Nunito_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "M51 — Sales Performance Dashboard",
+  title: "M51 AI OS Dashboard",
   description: "Sales performance and revenue metrics for M51",
 };
 
