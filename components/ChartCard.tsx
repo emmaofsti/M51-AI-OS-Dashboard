@@ -83,8 +83,8 @@ export function ChartCard({
                   boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.05)",
                   fontSize: "13px",
                 }}
-                formatter={(value: number) => [
-                  formatValue(value, valueFormat),
+                formatter={(value: number | undefined) => [
+                  formatValue(value ?? 0, valueFormat),
                   "",
                 ]}
               />
