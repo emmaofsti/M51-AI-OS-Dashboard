@@ -139,7 +139,7 @@ export async function GET(request: NextRequest) {
   try {
     const forceRefresh = request.nextUrl.searchParams.get("refresh") === "true";
     if (forceRefresh) clearCache();
-    const { deals, contacts, meetings, owners } = await getCachedDashboardData();
+    const { deals, contacts, meetings, owners, dealMRR } = await getCachedDashboardData();
 
     const range = request.nextUrl.searchParams.get("range") || "30d";
     const dealFilter = request.nextUrl.searchParams.get("dealFilter") || "all";
@@ -160,8 +160,8 @@ export async function GET(request: NextRequest) {
     // These are deals whose name contains any of the M51 AI OS product tiers/types:
     // "AI OS", "Pilotkunde" / "Pilot", "Pro", "Starter", "Enterprise", "Agency"
     // Matches deal names that belong to the M51 AI OS product line:
-    // "AI OS", any pilot variant, or product tiers (Pro / Starter / Enterprise / Agency)
-    const AI_OS_PATTERN = /ai.?os|pil{1,2}ot|\bpro\b|\bstarter\b|\benterprise\b|\bagency\b|\bdemo\b/i;
+    // "AI OS", any pilot variant, or product tiers (Pro / Starter / Enterprise / Agency / X)
+    const AI_OS_PATTERN = /ai.?os|pil{1,2}ot|\bpro\b|\bstarter\b|\benterprise\b|\bagency\b|\bdemo\b|\bx\b/i;
     const deals2026 = dealFilter === "ai-os"
       ? deals2026base.filter((d: any) =>
           AI_OS_PATTERN.test(d.properties.dealname ?? "")
@@ -182,15 +182,16 @@ export async function GET(request: NextRequest) {
     const wonPrevPeriod = wonDeals.filter(
       (d: any) => wonDate(d) >= prevPeriodStart && wonDate(d) <= prevPeriodEnd
     );
-    // Pilot-deals (Pilotkunde / Pillotprosjekt) har amount = månedlig verdi.
-    // Alle andre deals har amount = årsverdi → deles på 12 for å få MRR-bidrag.
-    const isPilotDeal = (name: string) => /pil{1,2}ot/i.test(name ?? "");
-    const toMonthly = (d: any) => {
+    // MRR per deal: bruk line item-sum hvis tilgjengelig (monthly priser bekreftet).
+    // Fallback: pilot = monthly amount, andre = årsverdi / 12.
+    const toMonthly = (d: any): number => {
+      const lineItemMRR = (dealMRR as Map<string, number> | undefined)?.get?.(d.id);
+      if (lineItemMRR !== undefined && lineItemMRR > 0) return lineItemMRR;
       const amount = parseFloat(d.properties.amount) || 0;
-      return isPilotDeal(d.properties.dealname) ? amount : amount / 12;
+      return /pil{1,2}ot/i.test(d.properties.dealname ?? "") ? amount : amount / 12;
     };
 
-    const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly(d), 0));
+const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly(d), 0));
     const totalARR = totalMRR * 12;
 
     // Ny MRR denne perioden vs forrige (for trend-pil)
@@ -283,7 +284,7 @@ export async function GET(request: NextRequest) {
             new Date(d.properties.closedate) >= mStart &&
             new Date(d.properties.closedate) <= mEnd
         )
-        .reduce((s: number, d: any) => s + (parseFloat(d.properties.amount) || 0), 0);
+        .reduce((s: number, d: any) => s + toMonthly(d), 0);
       mrrOverTime.push({ label, value: Math.round(monthRevenue) });
     }
 

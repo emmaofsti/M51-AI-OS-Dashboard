@@ -133,6 +133,53 @@ async function searchMeetings(after?: string) {
   });
 }
 
+// Fetch monthly MRR per deal by summing associated line item amounts.
+// Line items in M51 HubSpot use monthly prices — amount = price × qty after discount.
+async function fetchLineItemMRR(dealIds: string[]): Promise<Map<string, number>> {
+  if (dealIds.length === 0) return new Map();
+
+  // Step 1: Get associations deal → line items (batch, max 100 per request)
+  const lineItemToDeal = new Map<string, string>();
+  for (let i = 0; i < dealIds.length; i += 100) {
+    const chunk = dealIds.slice(i, i + 100);
+    const res = await hubspotFetch("/crm/v4/associations/deals/line_items/batch/read", {
+      method: "POST",
+      body: JSON.stringify({ inputs: chunk.map((id) => ({ id })) }),
+    });
+    for (const result of res.results || []) {
+      for (const assoc of result.to || []) {
+        lineItemToDeal.set(String(assoc.toObjectId), String(result.from.id));
+      }
+    }
+    if (i + 100 < dealIds.length) await delay(100);
+  }
+
+  if (lineItemToDeal.size === 0) return new Map();
+
+  // Step 2: Fetch line item objects and sum amounts per deal
+  const lineItemIds = [...lineItemToDeal.keys()];
+  const dealMRR = new Map<string, number>();
+  for (let i = 0; i < lineItemIds.length; i += 100) {
+    const chunk = lineItemIds.slice(i, i + 100);
+    const res = await hubspotFetch("/crm/v3/objects/line_items/batch/read", {
+      method: "POST",
+      body: JSON.stringify({
+        inputs: chunk.map((id) => ({ id })),
+        properties: ["amount"],
+      }),
+    });
+    for (const li of res.results || []) {
+      const dealId = lineItemToDeal.get(String(li.id));
+      if (!dealId) continue;
+      const amount = parseFloat(li.properties.amount) || 0;
+      dealMRR.set(dealId, (dealMRR.get(dealId) ?? 0) + amount);
+    }
+    if (i + 100 < lineItemIds.length) await delay(100);
+  }
+
+  return dealMRR;
+}
+
 async function fetchOwners() {
   // Try legacy v2 endpoint first — works without crm.objects.owners.read scope
   try {
@@ -185,5 +232,16 @@ async function fetchAllData() {
 
   const owners = await fetchOwners();
 
-  return { deals: allDeals, contacts: allContacts, meetings: allMeetings, owners };
+  await delay(200);
+
+  // Fetch line items for all deals — used for accurate MRR/ARR calculation
+  // Requires HubSpot scope: crm.objects.line_items.read
+  let dealMRR: Map<string, number> = new Map();
+  try {
+    dealMRR = await fetchLineItemMRR(allDeals.map((d: any) => d.id));
+  } catch (e) {
+    console.warn("Line items fetch failed (missing scope?), falling back to deal amount:", e);
+  }
+
+  return { deals: allDeals, contacts: allContacts, meetings: allMeetings, owners, dealMRR };
 }
