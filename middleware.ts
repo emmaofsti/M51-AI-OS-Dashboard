@@ -1,24 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export function middleware(request: NextRequest) {
-  const authHeader = request.headers.get("authorization");
+  const { pathname } = request.nextUrl;
 
-  if (authHeader?.startsWith("Basic ")) {
-    const base64 = authHeader.slice(6);
-    const decoded = Buffer.from(base64, "base64").toString();
-    const password = decoded.split(":")[1];
-
-    if (password === process.env.DASHBOARD_PASSWORD) {
-      return NextResponse.next();
-    }
+  // Ikke beskytt login-siden eller auth API-et
+  if (pathname.startsWith("/login") || pathname.startsWith("/api/auth")) {
+    return NextResponse.next();
   }
 
-  return new NextResponse("Authentication required", {
-    status: 401,
-    headers: {
-      "WWW-Authenticate": 'Basic realm="M51 Dashboard"',
-    },
-  });
+  const auth = request.cookies.get("m51_auth")?.value;
+
+  if (auth === process.env.DASHBOARD_PASSWORD) {
+    return NextResponse.next();
+  }
+
+  const loginUrl = request.nextUrl.clone();
+  loginUrl.pathname = "/login";
+  return NextResponse.redirect(loginUrl);
 }
 
 export const config = {
