@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getCachedDashboardData, clearCache } from "@/lib/hubspot";
+import { getCachedDashboardData, clearCache, fetchContactSourcesForDeals } from "@/lib/hubspot";
 import type { DashboardData } from "@/lib/mockData";
 import { OWNER_NAMES } from "@/lib/ownerNames";
 
@@ -348,12 +348,9 @@ const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly
     }
 
     // --- Meeting source breakdown ---
-    // Uses hs_latest_source (and _data_1/_data_2) — the most recent interaction source before the deal was created.
+    // Uses hs_latest_source from the contact associated with the deal (more accurate than deal-level source).
     // Categorises each meeting-booked deal into a human-readable channel bucket.
-    function categorizeMeetingSource(d: any): string {
-      const src = d.properties.hs_latest_source ?? "";
-      const d1 = (d.properties.hs_latest_source_data_1 ?? "").toLowerCase();
-      const d2 = (d.properties.hs_latest_source_data_2 ?? "").toLowerCase();
+    function categorizeMeetingSource(src: string, d1: string, d2: string): string {
 
       if (d1.includes("webinar") || d2.includes("webinar")) return "Webinar";
       if (
@@ -399,13 +396,17 @@ const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly
     );
 
     // Count by source for deals that have reached the meeting-booked stage in the period.
-    // We use deals (not meeting activity objects) because only deals carry hs_latest_source.
+    // Source is fetched from the associated contact's hs_latest_source for better accuracy.
     const sourceDeals = periodDeals.filter((d: any) =>
       hasReachedStage(d.properties.dealstage, "booked")
     );
+    const contactSources = await fetchContactSourcesForDeals(sourceDeals.map((d: any) => d.id));
     const sourceCounts: Record<string, number> = {};
     for (const d of sourceDeals) {
-      const cat = categorizeMeetingSource(d);
+      const cs = contactSources.get(d.id);
+      const cat = cs
+        ? categorizeMeetingSource(cs.src, cs.d1, cs.d2)
+        : "Ukjent";
       sourceCounts[cat] = (sourceCounts[cat] ?? 0) + 1;
     }
 

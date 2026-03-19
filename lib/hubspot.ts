@@ -180,6 +180,61 @@ async function fetchLineItemMRR(dealIds: string[]): Promise<Map<string, number>>
   return dealMRR;
 }
 
+// Fetch hs_latest_source (and _data_1/_data_2) from contacts associated with the given deal IDs.
+// Returns a Map<dealId, { src, d1, d2 }> for use in source categorization.
+export async function fetchContactSourcesForDeals(
+  dealIds: string[]
+): Promise<Map<string, { src: string; d1: string; d2: string }>> {
+  if (dealIds.length === 0) return new Map();
+
+  // Step 1: Get deal → contact associations (batch)
+  const dealToContact = new Map<string, string>();
+  for (let i = 0; i < dealIds.length; i += 100) {
+    const chunk = dealIds.slice(i, i + 100);
+    const res = await hubspotFetch("/crm/v4/associations/deals/contacts/batch/read", {
+      method: "POST",
+      body: JSON.stringify({ inputs: chunk.map((id) => ({ id })) }),
+    });
+    for (const result of res.results || []) {
+      const first = result.to?.[0];
+      if (first) dealToContact.set(String(result.from.id), String(first.toObjectId));
+    }
+    if (i + 100 < dealIds.length) await delay(100);
+  }
+
+  if (dealToContact.size === 0) return new Map();
+
+  // Step 2: Batch fetch contact source properties
+  const contactIds = [...new Set(dealToContact.values())];
+  const contactSource = new Map<string, { src: string; d1: string; d2: string }>();
+  for (let i = 0; i < contactIds.length; i += 100) {
+    const chunk = contactIds.slice(i, i + 100);
+    const res = await hubspotFetch("/crm/v3/objects/contacts/batch/read", {
+      method: "POST",
+      body: JSON.stringify({
+        inputs: chunk.map((id) => ({ id })),
+        properties: ["hs_latest_source", "hs_latest_source_data_1", "hs_latest_source_data_2"],
+      }),
+    });
+    for (const c of res.results || []) {
+      contactSource.set(String(c.id), {
+        src: c.properties.hs_latest_source ?? "",
+        d1: (c.properties.hs_latest_source_data_1 ?? "").toLowerCase(),
+        d2: (c.properties.hs_latest_source_data_2 ?? "").toLowerCase(),
+      });
+    }
+    if (i + 100 < contactIds.length) await delay(100);
+  }
+
+  // Step 3: Map back to deal IDs
+  const result = new Map<string, { src: string; d1: string; d2: string }>();
+  for (const [dealId, contactId] of dealToContact.entries()) {
+    const src = contactSource.get(contactId);
+    if (src) result.set(dealId, src);
+  }
+  return result;
+}
+
 async function fetchOwners() {
   // Try legacy v2 endpoint first — works without crm.objects.owners.read scope
   try {
