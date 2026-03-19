@@ -293,13 +293,19 @@ const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly
 
     if (range === "7d") {
       // Daily — last 7 days: grouped by when the meeting was BOOKED (hs_createdate)
+      // Use CET (UTC+1) day boundaries so days align with Norwegian midnight,
+      // regardless of whether the server runs in UTC (Vercel) or CET (local dev).
+      const CET_OFFSET_MS = 60 * 60 * 1000; // UTC+1
       for (let i = 6; i >= 0; i--) {
-        const day = new Date(now);
-        day.setDate(day.getDate() - i);
-        day.setHours(0, 0, 0, 0);
-        const dayEnd = new Date(day);
-        dayEnd.setHours(23, 59, 59, 999);
-        const label = day.toLocaleString("no", { weekday: "short" });
+        // Compute the Norwegian calendar date for this iteration
+        const nowInCET = new Date(now.getTime() + CET_OFFSET_MS);
+        const cetDay = new Date(nowInCET);
+        cetDay.setUTCDate(cetDay.getUTCDate() - i);
+        cetDay.setUTCHours(0, 0, 0, 0);
+        // Convert CET midnight back to UTC for filtering
+        const day = new Date(cetDay.getTime() - CET_OFFSET_MS);
+        const dayEnd = new Date(day.getTime() + 24 * 60 * 60 * 1000 - 1);
+        const label = cetDay.toLocaleString("no", { weekday: "short" });
         const count = salesMeetings2026.filter((m: any) => {
           const d = bookedDate(m);
           return d >= AI_OS_MEETINGS_START && d >= day && d <= dayEnd;
@@ -341,12 +347,12 @@ const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly
     }
 
     // --- Meeting source breakdown ---
-    // Uses hs_analytics_source (and _data_1/_data_2) inherited from the contact/deal.
+    // Uses hs_latest_source (and _data_1/_data_2) — the most recent interaction source before the deal was created.
     // Categorises each meeting-booked deal into a human-readable channel bucket.
     function categorizeMeetingSource(d: any): string {
-      const src = d.properties.hs_analytics_source ?? "";
-      const d1 = (d.properties.hs_analytics_source_data_1 ?? "").toLowerCase();
-      const d2 = (d.properties.hs_analytics_source_data_2 ?? "").toLowerCase();
+      const src = d.properties.hs_latest_source ?? "";
+      const d1 = (d.properties.hs_latest_source_data_1 ?? "").toLowerCase();
+      const d2 = (d.properties.hs_latest_source_data_2 ?? "").toLowerCase();
 
       if (d1.includes("webinar") || d2.includes("webinar")) return "Webinar";
       if (
@@ -392,7 +398,7 @@ const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly
     );
 
     // Count by source for deals that have reached the meeting-booked stage in the period.
-    // We use deals (not meeting activity objects) because only deals carry hs_analytics_source.
+    // We use deals (not meeting activity objects) because only deals carry hs_latest_source.
     const sourceDeals = periodDeals.filter((d: any) =>
       hasReachedStage(d.properties.dealstage, "booked")
     );
