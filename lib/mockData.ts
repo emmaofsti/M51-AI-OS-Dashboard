@@ -38,6 +38,7 @@ export interface DashboardData {
   primaryKPIs: {
     mrr: KPIData;
     arr: KPIData;
+    minArr: KPIData;
     totalCustomers: KPIData;
     closingRate: KPIData;
   };
@@ -68,8 +69,14 @@ export const mockData: DashboardData = {
       trendLabel: "vs last month",
     },
     arr: {
-      label: "ARR",
+      label: "Potensiell ARR",
       value: "1,540,800 kr",
+      trend: 8.2,
+      trendLabel: "yearly projection",
+    },
+    minArr: {
+      label: "Minimum ARR",
+      value: "385,200 kr",
       trend: 8.2,
       trendLabel: "yearly projection",
     },

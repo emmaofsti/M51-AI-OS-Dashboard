@@ -193,6 +193,7 @@ export async function GET(request: NextRequest) {
 
 const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly(d), 0));
     const totalARR = totalMRR * 12;
+    const totalMinARR = totalMRR * 3;
 
     // Ny MRR denne perioden vs forrige (for trend-pil)
     const newMRRThisPeriod = wonThisPeriod.reduce((s: number, d: any) => s + toMonthly(d), 0);
@@ -562,9 +563,15 @@ const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly
           trendLabel: vsLabel,
         },
         arr: {
-          label: "ARR",
+          label: "Potensiell ARR",
           value: `${totalARR.toLocaleString("no-NO")} kr`,
-          trend: mrrTrend, // ARR = MRR × 12, så samme %-endring
+          trend: mrrTrend,
+          trendLabel: vsLabel,
+        },
+        minArr: {
+          label: "Minimum ARR",
+          value: `${totalMinARR.toLocaleString("no-NO")} kr`,
+          trend: mrrTrend,
           trendLabel: vsLabel,
         },
         totalCustomers: {

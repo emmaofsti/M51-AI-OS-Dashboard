@@ -86,15 +86,16 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Row 1 — MRR / ARR / Kunder vunnet / Tapte kunder */}
+        {/* Row 1 — MRR / Potensiell ARR / Minimum ARR / Kunder vunnet / Tapte kunder */}
         <section className="mt-6">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {loading ? (
-              Array(4).fill(null).map((_, i) => <KPISkeleton key={i} />)
+              Array(5).fill(null).map((_, i) => <KPISkeleton key={i} />)
             ) : (
               <>
                 <KPICard data={data.primaryKPIs.mrr} />
                 <KPICard data={data.primaryKPIs.arr} />
+                <KPICard data={data.primaryKPIs.minArr} />
                 <KPICard data={data.primaryKPIs.totalCustomers} />
                 <KPICard data={data.churnAndRetention.customersLost} />
               </>
