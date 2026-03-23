@@ -243,13 +243,17 @@ const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly
       return MEETING_TITLE_PATTERN.test(title) && !MEETING_EXCLUDE_PATTERN.test(title);
     });
 
-    // "Booket" = meeting was created/added to the calendar in this period
-    // Møte-KPI-ene (booket/gjennomført) bruker alltid alle salgsmøter uavhengig av deal-filter
-    const meetingsThisPeriod = salesMeetings2026.filter(
-      (m: any) => bookedDate(m) >= meetingsFloor(periodStart)
+    // "Booket" = deals that have reached meeting-booked stage, counted by createdate.
+    // Using deals instead of calendar activities avoids double-counting rescheduled meetings.
+    // Always uses deals2026base (unfiltered by AI OS) since meeting KPIs show all meetings.
+    const meetingsThisPeriod = deals2026base.filter((d: any) =>
+      hasReachedStage(d.properties.dealstage, "booked") &&
+      new Date(d.properties.createdate) >= meetingsFloor(periodStart)
     );
-    const meetingsPrevPeriod = salesMeetings2026.filter(
-      (m: any) => bookedDate(m) >= meetingsFloor(prevPeriodStart) && bookedDate(m) <= prevPeriodEnd
+    const meetingsPrevPeriod = deals2026base.filter((d: any) =>
+      hasReachedStage(d.properties.dealstage, "booked") &&
+      new Date(d.properties.createdate) >= meetingsFloor(prevPeriodStart) &&
+      new Date(d.properties.createdate) <= prevPeriodEnd
     );
 
     // --- Meetings leaderboard: who booked the most meetings this period ---
@@ -290,47 +294,47 @@ const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly
     }
 
     // --- Meetings over time (granularity adapts to selected range) ---
+    // Uses deal createdate (consistent with KPI card — counts when deal/meeting was booked)
     const meetingsOverTime: { label: string; value: number }[] = [];
+    const bookedDeals2026 = deals2026base.filter((d: any) =>
+      hasReachedStage(d.properties.dealstage, "booked")
+    );
+    const dealBookedDate = (d: any) => new Date(d.properties.createdate);
 
     if (range === "7d") {
-      // Daily — last 7 days: grouped by when the meeting was BOOKED (hs_createdate)
-      // Use CET (UTC+1) day boundaries so days align with Norwegian midnight,
-      // regardless of whether the server runs in UTC (Vercel) or CET (local dev).
+      // Daily — last 7 days, CET day boundaries
       const CET_OFFSET_MS = 60 * 60 * 1000; // UTC+1
       for (let i = 6; i >= 0; i--) {
-        // Compute the Norwegian calendar date for this iteration
         const nowInCET = new Date(now.getTime() + CET_OFFSET_MS);
         const cetDay = new Date(nowInCET);
         cetDay.setUTCDate(cetDay.getUTCDate() - i);
         cetDay.setUTCHours(0, 0, 0, 0);
-        // Convert CET midnight back to UTC for filtering
         const day = new Date(cetDay.getTime() - CET_OFFSET_MS);
         const dayEnd = new Date(day.getTime() + 24 * 60 * 60 * 1000 - 1);
         const label = cetDay.toLocaleString("no", { weekday: "short" });
-        const count = salesMeetings2026.filter((m: any) => {
-          const d = bookedDate(m);
-          return d >= AI_OS_MEETINGS_START && d >= day && d <= dayEnd;
+        const count = bookedDeals2026.filter((d: any) => {
+          const cd = dealBookedDate(d);
+          return cd >= AI_OS_MEETINGS_START && cd >= day && cd <= dayEnd;
         }).length;
         meetingsOverTime.push({ label, value: count });
       }
     } else if (range === "year") {
-      // Monthly — each month of 2026 so far: grouped by when the meeting was BOOKED
+      // Monthly — each month of 2026 so far
       for (let m = 0; m <= now.getMonth(); m++) {
         const mStart = new Date(2026, m, 1);
         const mEnd = new Date(2026, m + 1, 0, 23, 59, 59);
         const label = mStart.toLocaleString("no", { month: "short" });
-        const count = salesMeetings2026.filter((mtg: any) => {
-          const d = bookedDate(mtg);
-          return d >= AI_OS_MEETINGS_START && d >= mStart && d <= mEnd;
+        const count = bookedDeals2026.filter((d: any) => {
+          const cd = dealBookedDate(d);
+          return cd >= AI_OS_MEETINGS_START && cd >= mStart && cd <= mEnd;
         }).length;
         meetingsOverTime.push({ label, value: count });
       }
     } else {
-      // Weekly — for 30d or 90d: grouped by when the meeting was BOOKED
+      // Weekly — for 30d or 90d
       const days = range === "90d" ? 90 : 30;
       const periodStartDate = new Date(now);
       periodStartDate.setDate(periodStartDate.getDate() - days);
-      // Start from AI_OS_MEETINGS_START or first week of 2026, whichever is later
       const clampedStart = periodStartDate < AI_OS_MEETINGS_START ? AI_OS_MEETINGS_START : periodStartDate;
       let wStart = startOfWeek(clampedStart);
       while (wStart <= now) {
@@ -338,9 +342,9 @@ const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly
         wEnd.setDate(wEnd.getDate() + 7);
         const { week: isoWeek, year: isoYear } = getISOWeekAndYear(wStart);
         const label = isoYear < now.getFullYear() ? `Uke ${isoWeek} '${String(isoYear).slice(2)}` : `Uke ${isoWeek}`;
-        const count = salesMeetings2026.filter((m: any) => {
-          const d = bookedDate(m);
-          return d >= AI_OS_MEETINGS_START && d >= wStart && d < wEnd;
+        const count = bookedDeals2026.filter((d: any) => {
+          const cd = dealBookedDate(d);
+          return cd >= AI_OS_MEETINGS_START && cd >= wStart && cd < wEnd;
         }).length;
         meetingsOverTime.push({ label, value: count });
         wStart = new Date(wEnd);
