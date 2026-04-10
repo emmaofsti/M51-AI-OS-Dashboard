@@ -75,6 +75,7 @@ async function searchDeals(after?: string) {
       "hs_latest_source",
       "hs_latest_source_data_1",
       "lead_source",
+      "hubspot_owner_id",
     ],
     limit: 100,
     sorts: [{ propertyName: "createdate", direction: "DESCENDING" }],
