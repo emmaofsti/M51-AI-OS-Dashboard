@@ -5,8 +5,8 @@
 export const OWNER_NAMES: Record<string, string> = {
   "26813296":  "Asgeir",
   "21417175":  "Eirik",
-  "222734413": "Emma",
+  "222734413": "Elisabeth",
   "111394562": "Mathias",  // M51 x Northern → Northern Instruksjonsfilm
   "78966808":  "Daniel",   // Springtime/b64-møter
-  "224568206": "Elisabeth",
+  "224568206": "Emma",
 };
