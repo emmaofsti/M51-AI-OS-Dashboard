@@ -93,6 +93,10 @@ const MEETING_HELD_STAGES = new Set([
   "13078631",              // Innovation Support: Møte gjennomført
 ]);
 
+const TRIAL_STAGES = new Set([
+  "1405622350",            // Salg: Gratis prøveperiode (14 dager)
+]);
+
 const OFFER_SENT_STAGES = new Set([
   "1499915",               // Salg: Tilbud sendt
   "918640",                // Eirik test: Tilbud sendt
@@ -105,9 +109,9 @@ const OFFER_SENT_STAGES = new Set([
 function hasReachedStage(stage: string, minStage: "booked" | "held" | "offer" | "won"): boolean {
   if (minStage === "won") return WON_STAGES.has(stage);
   if (minStage === "offer") return WON_STAGES.has(stage) || OFFER_SENT_STAGES.has(stage);
-  if (minStage === "held") return WON_STAGES.has(stage) || OFFER_SENT_STAGES.has(stage) || MEETING_HELD_STAGES.has(stage);
+  if (minStage === "held") return WON_STAGES.has(stage) || OFFER_SENT_STAGES.has(stage) || TRIAL_STAGES.has(stage) || MEETING_HELD_STAGES.has(stage);
   // booked
-  return WON_STAGES.has(stage) || OFFER_SENT_STAGES.has(stage) || MEETING_HELD_STAGES.has(stage) || MEETING_BOOKED_STAGES.has(stage);
+  return WON_STAGES.has(stage) || OFFER_SENT_STAGES.has(stage) || TRIAL_STAGES.has(stage) || MEETING_HELD_STAGES.has(stage) || MEETING_BOOKED_STAGES.has(stage);
 }
 
 // --- Date helpers ---
@@ -272,7 +276,9 @@ const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly
     }
     const meetingsLeaderboard = Object.entries(ownerCounts)
       .map(([id, count]) => ({
-        name: ownerMap.get(id) ?? OWNER_NAMES[id] ?? `Bruker ${id}`,
+        // Manual mappings take precedence so renamed/reassigned HubSpot users
+        // are shown with the current dashboard name.
+        name: OWNER_NAMES[id] ?? ownerMap.get(id) ?? `Bruker ${id}`,
         count,
       }))
       .sort((a, b) => b.count - a.count);

@@ -94,6 +94,7 @@ HubSpot-token mangler `crm.objects.owners.read` scope → manuell mapping:
 "222734413" → Emma
 "111394562" → Mathias
 "78966808"  → Daniel
+"97198504"  → Hedda
 "224568206" → Elisabeth
 ```
 
@@ -103,6 +104,7 @@ WON_STAGES:           closedwon, 1499916, 918641, 1090547557, 18284046, 13114424
 LOST_STAGES:          closedlost, 1499917, 918642, 1090547558, 18298898, 1090547555, 11359580, deal_registration_closed_lost
 MEETING_BOOKED_STAGES: appointmentscheduled, 1499914, 918638, 1090547553, 18284044, 11374877, 13060019
 MEETING_HELD_STAGES:  presentationscheduled, 19052976, 918639, 1090547554, 13078631
+TRIAL_STAGES:         1405622350
 OFFER_SENT_STAGES:    1499915, 918640, 9b4b0b98-bb9d-4bbc-9f3b-09fc6a6571fd, 1090547556, 18284045
 ```
 
