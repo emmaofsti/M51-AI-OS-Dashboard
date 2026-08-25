@@ -19,6 +19,10 @@ Aktivitets-KPI-ene beregnes fra HubSpots faktiske deal-steghistorikk i «Salg»-
 En prøveperiode teller bare som møte hvis dealen faktisk har vært i
 «Møte booket». Trial, vunnet og MRR rapporteres separat.
 
+«Møte gjennomført» bruker faktiske HubSpot-møteaktiviteter via
+deal → kontakt → møte. Møtet må være etter booking, ha passert sluttidspunktet
+og ikke være avlyst, no-show eller flyttet.
+
 Dashboardet oppdaterer automatisk fra HubSpot hvert minutt. Tidspunktet for
 siste fullførte HubSpot-henting vises i toppen, og oppdateringsknappen tvinger
 en umiddelbar ny henting.

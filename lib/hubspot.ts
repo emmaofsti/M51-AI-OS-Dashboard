@@ -68,6 +68,18 @@ interface ContactSourceRecord {
   };
 }
 
+export interface HubSpotMeeting {
+  id: string;
+  properties: {
+    hs_meeting_title?: string;
+    hs_meeting_outcome?: string;
+    hs_timestamp?: string;
+    hs_meeting_start_time?: string;
+    hs_meeting_end_time?: string;
+    hubspot_owner_id?: string;
+  };
+}
+
 interface LineItemRecord {
   id: string;
   properties: {
@@ -86,6 +98,11 @@ export interface DashboardSourceData {
 }
 
 let cache: { data: DashboardSourceData; timestamp: number } | null = null;
+let meetingsCache: {
+  key: string;
+  data: Map<string, HubSpotMeeting[]>;
+  timestamp: number;
+} | null = null;
 
 const delay = (milliseconds: number) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -294,6 +311,7 @@ export async function getCachedDashboardData(): Promise<DashboardSourceData> {
 
 export function clearCache(): void {
   cache = null;
+  meetingsCache = null;
 }
 
 export async function fetchContactSourcesForDeals(
@@ -357,5 +375,101 @@ export async function fetchContactSourcesForDeals(
     const source = contactSources.get(contactId);
     if (source) result.set(dealId, source);
   }
+  return result;
+}
+
+export async function fetchMeetingsForDeals(
+  dealIds: string[],
+): Promise<Map<string, HubSpotMeeting[]>> {
+  if (dealIds.length === 0) return new Map();
+  const cacheKey = [...dealIds].sort().join(",");
+  if (
+    meetingsCache &&
+    meetingsCache.key === cacheKey &&
+    Date.now() - meetingsCache.timestamp < CACHE_TTL
+  ) {
+    return meetingsCache.data;
+  }
+
+  const contactToDeals = new Map<string, Set<string>>();
+  for (let index = 0; index < dealIds.length; index += 100) {
+    const chunk = dealIds.slice(index, index + 100);
+    const response = await hubspotFetch<AssociationResponse>(
+      "/crm/v4/associations/deals/contacts/batch/read",
+      {
+        method: "POST",
+        body: JSON.stringify({ inputs: chunk.map((id) => ({ id })) }),
+      },
+    );
+    for (const result of response.results ?? []) {
+      for (const association of result.to ?? []) {
+        const contactId = String(association.toObjectId);
+        const dealsForContact = contactToDeals.get(contactId) ?? new Set<string>();
+        dealsForContact.add(String(result.from.id));
+        contactToDeals.set(contactId, dealsForContact);
+      }
+    }
+  }
+
+  const contactIds = [...contactToDeals.keys()];
+  const meetingToDeals = new Map<string, Set<string>>();
+  for (let index = 0; index < contactIds.length; index += 100) {
+    const chunk = contactIds.slice(index, index + 100);
+    const response = await hubspotFetch<AssociationResponse>(
+      "/crm/v4/associations/contacts/meetings/batch/read",
+      {
+        method: "POST",
+        body: JSON.stringify({ inputs: chunk.map((id) => ({ id })) }),
+      },
+    );
+    for (const result of response.results ?? []) {
+      const dealsForContact = contactToDeals.get(String(result.from.id));
+      if (!dealsForContact) continue;
+      for (const association of result.to ?? []) {
+        const meetingId = String(association.toObjectId);
+        const dealsForMeeting = meetingToDeals.get(meetingId) ?? new Set<string>();
+        for (const dealId of dealsForContact) dealsForMeeting.add(dealId);
+        meetingToDeals.set(meetingId, dealsForMeeting);
+      }
+    }
+  }
+
+  const meetingsByDeal = new Map<string, Map<string, HubSpotMeeting>>();
+  const meetingIds = [...meetingToDeals.keys()];
+  for (let index = 0; index < meetingIds.length; index += 100) {
+    const chunk = meetingIds.slice(index, index + 100);
+    const response = await hubspotFetch<BatchResponse<HubSpotMeeting>>(
+      "/crm/v3/objects/meetings/batch/read",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          inputs: chunk.map((id) => ({ id })),
+          properties: [
+            "hs_meeting_title",
+            "hs_meeting_outcome",
+            "hs_timestamp",
+            "hs_meeting_start_time",
+            "hs_meeting_end_time",
+            "hubspot_owner_id",
+          ],
+        }),
+      },
+    );
+    for (const meeting of response.results ?? []) {
+      for (const dealId of meetingToDeals.get(String(meeting.id)) ?? []) {
+        const meetings = meetingsByDeal.get(dealId) ?? new Map();
+        meetings.set(String(meeting.id), meeting);
+        meetingsByDeal.set(dealId, meetings);
+      }
+    }
+  }
+
+  const result = new Map(
+    [...meetingsByDeal].map(([dealId, meetings]) => [
+      dealId,
+      [...meetings.values()],
+    ]),
+  );
+  meetingsCache = { key: cacheKey, data: result, timestamp: Date.now() };
   return result;
 }

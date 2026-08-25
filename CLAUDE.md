@@ -20,6 +20,9 @@ deployes automatisk til Vercel fra GitHub-repoet `emmaofsti/M51-AI-OS-Dashboard`
 - Hvert steg må være eksplisitt dokumentert i historikken. En selvbetjent
   prøveperiode teller ikke som møte; en trial som tidligere har vært i
   «Møte booket» beholder det dokumenterte møtet.
+- «Møte gjennomført» utledes ikke fra deal-steget alene. Det krever en faktisk
+  møteaktivitet via deal → kontakt → meeting etter bookingtidspunktet, med
+  passert sluttid og uten `CANCELED`, `NO_SHOW` eller `RESCHEDULED`.
 - Hver deal telles maksimalt én gang per KPI og valgt periode.
 - `createdate` brukes bare for «Nye deals», ikke som proxy for stegovergang.
 - Closing rate er `vunnet / (vunnet + tapt)` basert på steghistorikk.

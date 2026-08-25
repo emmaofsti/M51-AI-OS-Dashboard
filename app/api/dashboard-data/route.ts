@@ -2,16 +2,17 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   clearCache,
   fetchContactSourcesForDeals,
+  fetchMeetingsForDeals,
   getCachedDashboardData,
   type HubSpotDeal,
   type HubSpotHistoryEntry,
+  type HubSpotMeeting,
 } from "@/lib/hubspot";
 import {
   AI_OS_PATTERN,
   DISQUALIFIED_STAGES,
   LOST_STAGES,
   MEETING_BOOKED_STAGES,
-  MEETING_HELD_STAGES,
   OFFER_SENT_STAGES,
   SALES_PIPELINE_ID,
   TRIAL_STAGES,
@@ -178,6 +179,56 @@ function activitiesInPeriod(
     if (event) activities.push({ deal, date: new Date(event.timestamp) });
   }
   return activities;
+}
+
+function firstHeldMeetingActivities(
+  deals: HubSpotDeal[],
+  meetingsByDeal: Map<string, HubSpotMeeting[]>,
+  now: Date,
+): DealActivity[] {
+  return deals.flatMap((deal) => {
+    const bookedAt = historyFor(deal).find((entry) =>
+      MEETING_BOOKED_STAGES.has(entry.value),
+    );
+    if (!bookedAt) return [];
+    const bookedDate = new Date(bookedAt.timestamp);
+    const meeting = (meetingsByDeal.get(deal.id) ?? [])
+      .filter((candidate) => {
+        const outcome = candidate.properties.hs_meeting_outcome ?? "";
+        if (["CANCELED", "NO_SHOW", "RESCHEDULED"].includes(outcome)) {
+          return false;
+        }
+        const startValue =
+          candidate.properties.hs_meeting_start_time ??
+          candidate.properties.hs_timestamp;
+        if (!startValue) return false;
+        const start = new Date(startValue);
+        const end = new Date(
+          candidate.properties.hs_meeting_end_time ?? startValue,
+        );
+        return start >= bookedDate && end <= now;
+      })
+      .sort((left, right) => {
+        const leftDate = new Date(
+          left.properties.hs_meeting_start_time ??
+            left.properties.hs_timestamp ??
+            0,
+        );
+        const rightDate = new Date(
+          right.properties.hs_meeting_start_time ??
+            right.properties.hs_timestamp ??
+            0,
+        );
+        return leftDate.getTime() - rightDate.getTime();
+      })[0];
+    if (!meeting) return [];
+    const date = new Date(
+      meeting.properties.hs_meeting_start_time ??
+        meeting.properties.hs_timestamp ??
+        0,
+    );
+    return [{ deal, date }];
+  });
 }
 
 function currentStageActivitiesInPeriod(
@@ -358,17 +409,24 @@ export async function GET(request: NextRequest) {
       prevPeriodStart,
       prevPeriodEnd,
     );
-    const meetingsHeldPeriod = activitiesInPeriod(
-      filteredDeals,
-      MEETING_HELD_STAGES,
-      periodStart,
+    const dealsWithDocumentedBooking = filteredDeals.filter((deal) =>
+      historyFor(deal).some((entry) =>
+        MEETING_BOOKED_STAGES.has(entry.value),
+      ),
+    );
+    const meetingsByDeal = await fetchMeetingsForDeals(
+      dealsWithDocumentedBooking.map((deal) => deal.id),
+    );
+    const heldMeetingActivities = firstHeldMeetingActivities(
+      dealsWithDocumentedBooking,
+      meetingsByDeal,
       now,
     );
-    const meetingsHeldPrev = activitiesInPeriod(
-      filteredDeals,
-      MEETING_HELD_STAGES,
-      prevPeriodStart,
-      prevPeriodEnd,
+    const meetingsHeldPeriod = heldMeetingActivities.filter(
+      ({ date }) => date >= periodStart && date <= now,
+    );
+    const meetingsHeldPrev = heldMeetingActivities.filter(
+      ({ date }) => date >= prevPeriodStart && date <= prevPeriodEnd,
     );
     const offersSentPeriod = activitiesInPeriod(
       filteredDeals,
