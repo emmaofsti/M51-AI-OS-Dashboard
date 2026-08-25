@@ -13,7 +13,7 @@ import { useState, useEffect } from "react";
 
 interface DashboardHeaderProps {
   onDateRangeChange?: (range: string) => void;
-  onRefresh?: () => void;
+  onRefresh?: () => Promise<void>;
   dealFilter?: "all" | "ai-os";
   onDealFilterChange?: (filter: "all" | "ai-os") => void;
 }
@@ -42,10 +42,13 @@ export function DashboardHeader({
     localStorage.setItem("theme", next ? "dark" : "light");
   };
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     setIsRefreshing(true);
-    onRefresh?.();
-    setTimeout(() => setIsRefreshing(false), 800);
+    try {
+      await onRefresh?.();
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   return (
@@ -59,7 +62,7 @@ export function DashboardHeader({
             M51 AI OS Dashboard
           </h1>
           <p className="text-sm text-muted-foreground">
-            Revenue, meetings, and conversion metrics
+            Inntekt, møter og konvertering
           </p>
         </div>
       </div>
@@ -96,10 +99,10 @@ export function DashboardHeader({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="7d">Last 7 days</SelectItem>
-            <SelectItem value="30d">Last 30 days</SelectItem>
-            <SelectItem value="90d">Last 90 days</SelectItem>
-            <SelectItem value="year">This year</SelectItem>
+            <SelectItem value="7d">Siste 7 dager</SelectItem>
+            <SelectItem value="30d">Siste 30 dager</SelectItem>
+            <SelectItem value="90d">Siste 90 dager</SelectItem>
+            <SelectItem value="year">Dette året</SelectItem>
           </SelectContent>
         </Select>
         <Button
@@ -115,6 +118,7 @@ export function DashboardHeader({
           size="icon"
           onClick={handleRefresh}
           disabled={isRefreshing}
+          aria-label="Oppdater HubSpot-data"
         >
           <RefreshCw
             className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}

@@ -1,16 +1,100 @@
-// HubSpot API helper — fetches CRM data for M51 Dashboard
+import { AI_OS_PATTERN, WON_STAGES } from "@/lib/dashboardConfig";
 
 const HUBSPOT_TOKEN = process.env.HUBSPOT_ACCESS_TOKEN;
 const BASE_URL = "https://api.hubapi.com";
+const CACHE_TTL = 30 * 60 * 1000;
 
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const DEAL_PROPERTIES = [
+  "dealname",
+  "amount",
+  "dealstage",
+  "closedate",
+  "createdate",
+  "pipeline",
+  "hs_lastmodifieddate",
+  "hubspot_owner_id",
+] as const;
 
-async function hubspotFetch(
+export interface HubSpotHistoryEntry {
+  value: string;
+  timestamp: string;
+  sourceType?: string;
+}
+
+export interface HubSpotDeal {
+  id: string;
+  properties: {
+    dealname?: string;
+    amount?: string;
+    dealstage?: string;
+    closedate?: string;
+    createdate?: string;
+    pipeline?: string;
+    hs_lastmodifieddate?: string;
+    hubspot_owner_id?: string;
+  };
+  propertiesWithHistory?: {
+    dealstage?: HubSpotHistoryEntry[];
+  };
+}
+
+interface SearchResponse<T> {
+  results?: T[];
+  paging?: { next?: { after?: string } };
+}
+
+interface BatchResponse<T> {
+  results?: T[];
+}
+
+interface AssociationResult {
+  from: { id: string };
+  to?: Array<{ toObjectId: number | string }>;
+}
+
+interface AssociationResponse {
+  results?: AssociationResult[];
+}
+
+interface ContactSourceRecord {
+  id: string;
+  properties: {
+    hs_latest_source?: string;
+    hs_latest_source_data_1?: string;
+    hs_latest_source_data_2?: string;
+  };
+}
+
+interface LineItemRecord {
+  id: string;
+  properties: {
+    name?: string;
+    amount?: string;
+    recurringbillingfrequency?: string;
+    hs_recurring_billing_period?: string;
+  };
+}
+
+export interface DashboardSourceData {
+  deals: HubSpotDeal[];
+  dealMRR: Map<string, number>;
+}
+
+let cache: { data: DashboardSourceData; timestamp: number } | null = null;
+
+const delay = (milliseconds: number) =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function hubspotFetch<T>(
   endpoint: string,
   options?: RequestInit,
-  retries = 3
-): Promise<any> {
-  const res = await fetch(`${BASE_URL}${endpoint}`, {
+  retries = 5,
+): Promise<T> {
+  if (!HUBSPOT_TOKEN) {
+    throw new Error("HUBSPOT_ACCESS_TOKEN is not configured");
+  }
+
+  const response = await fetch(`${BASE_URL}${endpoint}`, {
     ...options,
     headers: {
       Authorization: `Bearer ${HUBSPOT_TOKEN}`,
@@ -19,285 +103,247 @@ async function hubspotFetch(
     },
   });
 
-  if (res.status === 429 && retries > 0) {
+  if (response.status === 429 && retries > 0) {
     await delay(1200);
-    return hubspotFetch(endpoint, options, retries - 1);
+    return hubspotFetch<T>(endpoint, options, retries - 1);
   }
 
-  if (!res.ok) {
-    const error = await res.text();
-    throw new Error(`HubSpot API error (${res.status}): ${error}`);
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`HubSpot API error (${response.status}): ${error}`);
   }
 
-  return res.json();
+  return response.json() as Promise<T>;
 }
 
-// --- Server-side cache (5 min TTL) ---
-let cache: { data: any; timestamp: number } | null = null;
-const CACHE_TTL = 30 * 60 * 1000; // 30 min — reduces how often the slow HubSpot fetch runs
-
-export async function getCachedDashboardData() {
-  if (cache && Date.now() - cache.timestamp < CACHE_TTL) {
-    return cache.data;
-  }
-  const data = await fetchAllData();
-  cache = { data, timestamp: Date.now() };
-  return data;
+function dashboardDataStart(): number {
+  const currentYear = new Date().getUTCFullYear();
+  return Date.UTC(currentYear - 1, 0, 1);
 }
 
-export function clearCache() {
-  cache = null;
-}
-
-// --- Fetch all deals modified since 2025-01-01 ---
-// Wide net: catches deals created before 2026 but won/updated in 2026 (e.g. Activeon),
-// without fetching years of completely irrelevant historical data.
-async function searchDeals(after?: string) {
-  const since2025 = new Date(2025, 0, 1).getTime().toString();
-  const body: any = {
-    filterGroups: [
-      {
-        filters: [{ propertyName: "hs_lastmodifieddate", operator: "GTE", value: since2025 }],
-      },
-    ],
-    properties: [
-      "dealname",
-      "amount",
-      "dealstage",
-      "closedate",
-      "createdate",
-      "pipeline",
-      "hs_lastmodifieddate",
-      // Source / channel tracking fields
-      "hs_analytics_source",
-      "hs_analytics_source_data_1",
-      "hs_analytics_source_data_2",
-      "hs_latest_source",
-      "hs_latest_source_data_1",
-      "lead_source",
-      "hubspot_owner_id",
-    ],
-    limit: 100,
-    sorts: [{ propertyName: "createdate", direction: "DESCENDING" }],
-  };
-  if (after) body.after = after;
-
-  return hubspotFetch("/crm/v3/objects/deals/search", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-async function searchContacts(after?: string) {
-  const body: any = {
+async function searchDeals(after?: string): Promise<SearchResponse<HubSpotDeal>> {
+  const start = dashboardDataStart().toString();
+  const body: Record<string, unknown> = {
     filterGroups: [
       {
         filters: [
-          {
-            propertyName: "createdate",
-            operator: "GTE",
-            value: new Date(2026, 0, 1).getTime().toString(),
-          },
+          { propertyName: "createdate", operator: "GTE", value: start },
+        ],
+      },
+      {
+        filters: [
+          { propertyName: "closedate", operator: "GTE", value: start },
         ],
       },
     ],
-    properties: ["createdate", "lifecyclestage"],
+    properties: [...DEAL_PROPERTIES],
     limit: 100,
     sorts: [{ propertyName: "createdate", direction: "DESCENDING" }],
   };
   if (after) body.after = after;
 
-  return hubspotFetch("/crm/v3/objects/contacts/search", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  return hubspotFetch<SearchResponse<HubSpotDeal>>(
+    "/crm/v3/objects/deals/search",
+    { method: "POST", body: JSON.stringify(body) },
+  );
 }
 
-// Fetch all HubSpot meeting activities from 2026 onwards
-async function searchMeetings(after?: string) {
-  const since2026 = new Date("2025-12-31T23:00:00Z").getTime().toString(); // Jan 1 00:00 CET
-  const body: any = {
-    filterGroups: [
+async function fetchDealHistories(deals: HubSpotDeal[]): Promise<HubSpotDeal[]> {
+  const byId = new Map(deals.map((deal) => [deal.id, deal]));
+
+  // HubSpot limits property-history batches to 50 records.
+  for (let index = 0; index < deals.length; index += 50) {
+    const chunk = deals.slice(index, index + 50);
+    const response = await hubspotFetch<BatchResponse<HubSpotDeal>>(
+      "/crm/v3/objects/deals/batch/read",
       {
-        filters: [{ propertyName: "hs_timestamp", operator: "GTE", value: since2026 }],
+        method: "POST",
+        body: JSON.stringify({
+          inputs: chunk.map(({ id }) => ({ id })),
+          properties: [...DEAL_PROPERTIES],
+          propertiesWithHistory: ["dealstage"],
+        }),
       },
-    ],
-    properties: ["hs_meeting_title", "hs_timestamp", "hs_meeting_start_time", "hs_createdate", "hubspot_owner_id"],
-    limit: 100,
-    sorts: [{ propertyName: "hs_timestamp", direction: "DESCENDING" }],
-  };
-  if (after) body.after = after;
+    );
 
-  return hubspotFetch("/crm/v3/objects/meetings/search", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-// Fetch monthly MRR per deal by summing associated line item amounts.
-// Line items in M51 HubSpot use monthly prices — amount = price × qty after discount.
-async function fetchLineItemMRR(dealIds: string[]): Promise<Map<string, number>> {
-  if (dealIds.length === 0) return new Map();
-
-  // Step 1: Get associations deal → line items (batch, max 100 per request)
-  const lineItemToDeal = new Map<string, string>();
-  for (let i = 0; i < dealIds.length; i += 100) {
-    const chunk = dealIds.slice(i, i + 100);
-    const res = await hubspotFetch("/crm/v4/associations/deals/line_items/batch/read", {
-      method: "POST",
-      body: JSON.stringify({ inputs: chunk.map((id) => ({ id })) }),
-    });
-    for (const result of res.results || []) {
-      for (const assoc of result.to || []) {
-        lineItemToDeal.set(String(assoc.toObjectId), String(result.from.id));
-      }
-    }
-    if (i + 100 < dealIds.length) await delay(100);
+    for (const deal of response.results ?? []) byId.set(deal.id, deal);
+    if (index + 50 < deals.length) await delay(250);
   }
 
-  if (lineItemToDeal.size === 0) return new Map();
+  return [...byId.values()];
+}
 
-  // Step 2: Fetch line item objects and sum amounts per deal
+async function fetchLineItemMRR(
+  dealIds: string[],
+): Promise<Map<string, number>> {
+  if (dealIds.length === 0) return new Map();
+
+  const lineItemToDeal = new Map<string, string>();
+  for (let index = 0; index < dealIds.length; index += 100) {
+    const chunk = dealIds.slice(index, index + 100);
+    const response = await hubspotFetch<AssociationResponse>(
+      "/crm/v4/associations/deals/line_items/batch/read",
+      {
+        method: "POST",
+        body: JSON.stringify({ inputs: chunk.map((id) => ({ id })) }),
+      },
+    );
+
+    for (const result of response.results ?? []) {
+      for (const association of result.to ?? []) {
+        lineItemToDeal.set(
+          String(association.toObjectId),
+          String(result.from.id),
+        );
+      }
+    }
+  }
+
   const lineItemIds = [...lineItemToDeal.keys()];
   const dealMRR = new Map<string, number>();
-  for (let i = 0; i < lineItemIds.length; i += 100) {
-    const chunk = lineItemIds.slice(i, i + 100);
-    const res = await hubspotFetch("/crm/v3/objects/line_items/batch/read", {
-      method: "POST",
-      body: JSON.stringify({
-        inputs: chunk.map((id) => ({ id })),
-        properties: ["amount"],
-      }),
-    });
-    for (const li of res.results || []) {
-      const dealId = lineItemToDeal.get(String(li.id));
+  for (const dealId of lineItemToDeal.values()) dealMRR.set(dealId, 0);
+
+  for (let index = 0; index < lineItemIds.length; index += 100) {
+    const chunk = lineItemIds.slice(index, index + 100);
+    const response = await hubspotFetch<BatchResponse<LineItemRecord>>(
+      "/crm/v3/objects/line_items/batch/read",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          inputs: chunk.map((id) => ({ id })),
+          properties: [
+            "name",
+            "amount",
+            "recurringbillingfrequency",
+            "hs_recurring_billing_period",
+          ],
+        }),
+      },
+    );
+
+    for (const lineItem of response.results ?? []) {
+      const dealId = lineItemToDeal.get(String(lineItem.id));
       if (!dealId) continue;
-      const amount = parseFloat(li.properties.amount) || 0;
-      dealMRR.set(dealId, (dealMRR.get(dealId) ?? 0) + amount);
+      const amount = Number.parseFloat(lineItem.properties.amount ?? "") || 0;
+      const frequency = (
+        lineItem.properties.recurringbillingfrequency ??
+        lineItem.properties.hs_recurring_billing_period ??
+        ""
+      ).toLowerCase();
+      const monthlyAmount =
+        frequency === "monthly" || frequency === "p1m"
+          ? amount
+          : frequency === "annually" || frequency === "yearly" || frequency === "p1y"
+            ? amount / 12
+            : !frequency && AI_OS_PATTERN.test(lineItem.properties.name ?? "")
+              ? amount
+              : 0;
+      dealMRR.set(dealId, (dealMRR.get(dealId) ?? 0) + monthlyAmount);
     }
-    if (i + 100 < lineItemIds.length) await delay(100);
   }
 
   return dealMRR;
 }
 
-// Fetch hs_latest_source (and _data_1/_data_2) from contacts associated with the given deal IDs.
-// Returns a Map<dealId, { src, d1, d2 }> for use in source categorization.
+async function fetchAllData(): Promise<DashboardSourceData> {
+  const searchedDeals: HubSpotDeal[] = [];
+  let after: string | undefined;
+  do {
+    const response = await searchDeals(after);
+    searchedDeals.push(...(response.results ?? []));
+    after = response.paging?.next?.after;
+    if (after) await delay(100);
+  } while (after);
+
+  const deals = await fetchDealHistories(searchedDeals);
+  const wonDealIds = deals
+    .filter((deal) => WON_STAGES.has(deal.properties.dealstage ?? ""))
+    .map((deal) => deal.id);
+
+  let dealMRR = new Map<string, number>();
+  try {
+    dealMRR = await fetchLineItemMRR(wonDealIds);
+  } catch (error) {
+    console.warn(
+      "Line items fetch failed; falling back to deal amount.",
+      error,
+    );
+  }
+
+  return { deals, dealMRR };
+}
+
+export async function getCachedDashboardData(): Promise<DashboardSourceData> {
+  if (cache && Date.now() - cache.timestamp < CACHE_TTL) return cache.data;
+  const data = await fetchAllData();
+  cache = { data, timestamp: Date.now() };
+  return data;
+}
+
+export function clearCache(): void {
+  cache = null;
+}
+
 export async function fetchContactSourcesForDeals(
-  dealIds: string[]
+  dealIds: string[],
 ): Promise<Map<string, { src: string; d1: string; d2: string }>> {
   if (dealIds.length === 0) return new Map();
 
-  // Step 1: Get deal → contact associations (batch)
   const dealToContact = new Map<string, string>();
-  for (let i = 0; i < dealIds.length; i += 100) {
-    const chunk = dealIds.slice(i, i + 100);
-    const res = await hubspotFetch("/crm/v4/associations/deals/contacts/batch/read", {
-      method: "POST",
-      body: JSON.stringify({ inputs: chunk.map((id) => ({ id })) }),
-    });
-    for (const result of res.results || []) {
+  for (let index = 0; index < dealIds.length; index += 100) {
+    const chunk = dealIds.slice(index, index + 100);
+    const response = await hubspotFetch<AssociationResponse>(
+      "/crm/v4/associations/deals/contacts/batch/read",
+      {
+        method: "POST",
+        body: JSON.stringify({ inputs: chunk.map((id) => ({ id })) }),
+      },
+    );
+
+    for (const result of response.results ?? []) {
       const first = result.to?.[0];
-      if (first) dealToContact.set(String(result.from.id), String(first.toObjectId));
+      if (first) {
+        dealToContact.set(String(result.from.id), String(first.toObjectId));
+      }
     }
-    if (i + 100 < dealIds.length) await delay(100);
   }
 
-  if (dealToContact.size === 0) return new Map();
-
-  // Step 2: Batch fetch contact source properties
   const contactIds = [...new Set(dealToContact.values())];
-  const contactSource = new Map<string, { src: string; d1: string; d2: string }>();
-  for (let i = 0; i < contactIds.length; i += 100) {
-    const chunk = contactIds.slice(i, i + 100);
-    const res = await hubspotFetch("/crm/v3/objects/contacts/batch/read", {
-      method: "POST",
-      body: JSON.stringify({
-        inputs: chunk.map((id) => ({ id })),
-        properties: ["hs_latest_source", "hs_latest_source_data_1", "hs_latest_source_data_2"],
-      }),
-    });
-    for (const c of res.results || []) {
-      contactSource.set(String(c.id), {
-        src: c.properties.hs_latest_source ?? "",
-        d1: (c.properties.hs_latest_source_data_1 ?? "").toLowerCase(),
-        d2: (c.properties.hs_latest_source_data_2 ?? "").toLowerCase(),
+  const contactSources = new Map<
+    string,
+    { src: string; d1: string; d2: string }
+  >();
+
+  for (let index = 0; index < contactIds.length; index += 100) {
+    const chunk = contactIds.slice(index, index + 100);
+    const response = await hubspotFetch<BatchResponse<ContactSourceRecord>>(
+      "/crm/v3/objects/contacts/batch/read",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          inputs: chunk.map((id) => ({ id })),
+          properties: [
+            "hs_latest_source",
+            "hs_latest_source_data_1",
+            "hs_latest_source_data_2",
+          ],
+        }),
+      },
+    );
+
+    for (const contact of response.results ?? []) {
+      contactSources.set(String(contact.id), {
+        src: contact.properties.hs_latest_source ?? "",
+        d1: (contact.properties.hs_latest_source_data_1 ?? "").toLowerCase(),
+        d2: (contact.properties.hs_latest_source_data_2 ?? "").toLowerCase(),
       });
     }
-    if (i + 100 < contactIds.length) await delay(100);
   }
 
-  // Step 3: Map back to deal IDs
   const result = new Map<string, { src: string; d1: string; d2: string }>();
-  for (const [dealId, contactId] of dealToContact.entries()) {
-    const src = contactSource.get(contactId);
-    if (src) result.set(dealId, src);
+  for (const [dealId, contactId] of dealToContact) {
+    const source = contactSources.get(contactId);
+    if (source) result.set(dealId, source);
   }
   return result;
-}
-
-async function fetchOwners() {
-  // Try legacy v2 endpoint first — works without crm.objects.owners.read scope
-  try {
-    const data = await hubspotFetch("/owners/v2/owners");
-    if (Array.isArray(data)) return data;
-  } catch {}
-  // Fall back to v3
-  try {
-    const data = await hubspotFetch("/crm/v3/owners?limit=100");
-    return data.results || [];
-  } catch {
-    return [];
-  }
-}
-
-async function fetchAllData() {
-  // Fetch deals (paginated) — 50ms delay between pages to stay within rate limits
-  let allDeals: any[] = [];
-  let after: string | undefined;
-  do {
-    const data = await searchDeals(after);
-    allDeals = allDeals.concat(data.results || []);
-    after = data.paging?.next?.after;
-    if (after) await delay(50);
-  } while (after);
-
-  await delay(200); // Brief pause before contacts
-
-  // Fetch contacts (paginated)
-  let allContacts: any[] = [];
-  after = undefined;
-  do {
-    const data = await searchContacts(after);
-    allContacts = allContacts.concat(data.results || []);
-    after = data.paging?.next?.after;
-    if (after) await delay(50);
-  } while (after);
-
-  await delay(200);
-
-  // Fetch meeting activities (paginated)
-  let allMeetings: any[] = [];
-  after = undefined;
-  do {
-    const data = await searchMeetings(after);
-    allMeetings = allMeetings.concat(data.results || []);
-    after = data.paging?.next?.after;
-    if (after) await delay(50);
-  } while (after);
-
-  const owners = await fetchOwners();
-
-  await delay(200);
-
-  // Fetch line items for all deals — used for accurate MRR/ARR calculation
-  // Requires HubSpot scope: crm.objects.line_items.read
-  let dealMRR: Map<string, number> = new Map();
-  try {
-    dealMRR = await fetchLineItemMRR(allDeals.map((d: any) => d.id));
-  } catch (e) {
-    console.warn("Line items fetch failed (missing scope?), falling back to deal amount:", e);
-  }
-
-  return { deals: allDeals, contacts: allContacts, meetings: allMeetings, owners, dealMRR };
 }

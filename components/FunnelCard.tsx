@@ -75,8 +75,8 @@ export function FunnelCard({ title, stages }: FunnelCardProps) {
                       />
                     </svg>
                     <span>
-                      {stage.conversionRate}% conversion to{" "}
-                      {stages[i + 1]?.name ?? "next stage"}
+                      {stage.conversionRate}% konvertering til{" "}
+                      {stages[i + 1]?.name ?? "neste steg"}
                     </span>
                   </div>
                 )}

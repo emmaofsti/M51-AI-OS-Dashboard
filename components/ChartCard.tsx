@@ -14,6 +14,7 @@ import {
   Area,
   AreaChart,
 } from "recharts";
+import { useId } from "react";
 import type { ChartDataPoint } from "@/lib/mockData";
 
 interface ChartCardProps {
@@ -27,7 +28,7 @@ interface ChartCardProps {
 
 function formatValue(value: number, format: "currency" | "number") {
   if (format === "currency") {
-    return `${(value / 1000).toFixed(0)}k kr`;
+    return `${Math.round(value).toLocaleString("no-NO")} kr`;
   }
   return value.toString();
 }
@@ -40,18 +41,24 @@ export function ChartCard({
   variant = "area",
 }: ChartCardProps) {
   const ChartComponent = variant === "area" ? AreaChart : variant === "bar" ? BarChart : LineChart;
+  const gradientId = useId().replaceAll(":", "");
 
   return (
-    <Card className="bg-card">
+    <Card className="min-w-0 bg-card">
       <CardHeader>
         <CardTitle className="text-base font-semibold">{title}</CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="h-[300px] w-full">
-          <ResponsiveContainer width="100%" height="100%">
+      <CardContent className="min-w-0">
+        <div className="h-[300px] min-w-0 w-full">
+          <ResponsiveContainer
+            width="100%"
+            height="100%"
+            minWidth={0}
+            initialDimension={{ width: 800, height: 300 }}
+          >
             <ChartComponent data={data}>
               <defs>
-                <linearGradient id={`gradient-${title}`} x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={color} stopOpacity={0.15} />
                   <stop offset="100%" stopColor={color} stopOpacity={0} />
                 </linearGradient>
@@ -94,7 +101,7 @@ export function ChartCard({
                   dataKey="value"
                   stroke={color}
                   strokeWidth={2.5}
-                  fill={`url(#gradient-${title})`}
+                  fill={`url(#${gradientId})`}
                   dot={false}
                   activeDot={{ r: 5, strokeWidth: 2, fill: "#fff" }}
                 />

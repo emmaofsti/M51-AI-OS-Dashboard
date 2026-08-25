@@ -7,7 +7,7 @@ import { KPICard } from "@/components/KPICard";
 import { ChartCard } from "@/components/ChartCard";
 import { FunnelCard } from "@/components/FunnelCard";
 import { SourceCard } from "@/components/SourceCard";
-import { mockData, type DashboardData } from "@/lib/mockData";
+import type { DashboardData } from "@/lib/mockData";
 
 function KPISkeleton() {
   return (
@@ -20,8 +20,9 @@ function KPISkeleton() {
 }
 
 export default function DashboardPage() {
-  const [data, setData] = useState<DashboardData>(mockData);
+  const [data, setData] = useState<DashboardData | null>(null);
   const [isLive, setIsLive] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState("30d");
   const [dealFilter, setDealFilter] = useState<"all" | "ai-os">("ai-os");
@@ -29,6 +30,7 @@ export default function DashboardPage() {
 
   const fetchData = useCallback(async (signal?: AbortSignal, forceRefresh = false) => {
     setLoading(true);
+    setError(null);
     try {
       const url = `/api/dashboard-data?range=${dateRange}&dealFilter=${dealFilter}${forceRefresh ? "&refresh=true" : ""}`;
       const res = await fetch(url, { signal });
@@ -37,10 +39,10 @@ export default function DashboardPage() {
       if (json.error) throw new Error(json.error);
       setData(json);
       setIsLive(true);
-    } catch (err: any) {
-      if (err?.name === "AbortError") return;
-      setData(mockData);
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setIsLive(false);
+      setError("Kunne ikke hente HubSpot-data. Ingen erstatningstall vises.");
     } finally {
       setLoading(false);
     }
@@ -78,15 +80,30 @@ export default function DashboardPage() {
                 }`}
               />
               <span className="text-xs text-muted-foreground">
-                {isLive ? "Live HubSpot data" : "Mock data (API unavailable)"}
+                {isLive ? "Live HubSpot-data" : "HubSpot-data utilgjengelig"}
               </span>
               <span className="text-xs text-muted-foreground/50">·</span>
               <span className="text-xs text-muted-foreground">
-                All data from 2026
+                Data fra {new Date().getFullYear()}
               </span>
             </>
           )}
         </div>
+
+        {error && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+            {error}
+          </div>
+        )}
+
+        {!data && loading && (
+          <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            {Array(5).fill(null).map((_, i) => <KPISkeleton key={i} />)}
+          </section>
+        )}
+
+        {data && (
+          <>
 
         {/* Row 1 — MRR / Potensiell ARR / Minimum ARR / Kunder vunnet / Tapte kunder */}
         <section className="mt-6">
@@ -125,7 +142,7 @@ export default function DashboardPage() {
         <section className="mt-6">
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <ChartCard
-              title="Inntekt per måned (2026)"
+              title={`Ny MRR per måned (${new Date().getFullYear()})`}
               data={data.mrrOverTime}
               valueFormat="currency"
               color="#10B981"
@@ -134,10 +151,10 @@ export default function DashboardPage() {
             <div className="flex flex-col gap-2">
               <ChartCard
                 title={
-                  dateRange === "7d" ? "Meetings booket (siste 7 dager)" :
-                  dateRange === "90d" ? "Meetings booket (siste 90 dager)" :
-                  dateRange === "year" ? "Meetings booket (2026)" :
-                  "Meetings booket (siste 30 dager)"
+                  dateRange === "7d" ? "Møter booket (siste 7 dager)" :
+                  dateRange === "90d" ? "Møter booket (siste 90 dager)" :
+                  dateRange === "year" ? `Møter booket (${new Date().getFullYear()})` :
+                  "Møter booket (siste 30 dager)"
                 }
                 data={data.meetingsOverTime}
                 valueFormat="number"
@@ -185,11 +202,13 @@ export default function DashboardPage() {
               items={data.meetingsBySource}
               total={loading ? 0 : data.meetingsBySource.reduce((s, i) => s + i.value, 0)}
             />
-            <FunnelCard title="Sales Funnel" stages={data.funnelStages} />
+            <FunnelCard title="Salgstrakt" stages={data.funnelStages} />
           </div>
         </section>
 
         <div className="mt-8" />
+          </>
+        )}
       </div>
     </div>
   );

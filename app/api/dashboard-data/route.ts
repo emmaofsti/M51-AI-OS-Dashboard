@@ -1,137 +1,141 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getCachedDashboardData, clearCache, fetchContactSourcesForDeals } from "@/lib/hubspot";
+import {
+  clearCache,
+  fetchContactSourcesForDeals,
+  getCachedDashboardData,
+  type HubSpotDeal,
+  type HubSpotHistoryEntry,
+} from "@/lib/hubspot";
+import {
+  AI_OS_PATTERN,
+  BOOKED_OR_LATER_STAGES,
+  HELD_OR_LATER_STAGES,
+  LOST_STAGES,
+  OFFER_OR_LATER_STAGES,
+  WON_STAGES,
+} from "@/lib/dashboardConfig";
 import type { DashboardData } from "@/lib/mockData";
 import { OWNER_NAMES } from "@/lib/ownerNames";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Vercel max for Hobby plan — HubSpot fetch can take 5–15s
+export const maxDuration = 60;
 
-// --- Date range helpers ---
-// Use explicit UTC midnight for Norwegian "start of day" (CET = UTC+1 in winter)
-// This ensures consistent results regardless of where the server runs (local CET vs Vercel UTC)
-const YEAR_START_2026  = new Date("2025-12-31T23:00:00Z"); // Jan  1 00:00 CET
-const YEAR_START_2025  = new Date("2024-12-31T23:00:00Z"); // Jan  1 00:00 CET 2025
-const YEAR_END_2025    = new Date("2025-12-31T22:59:59Z"); // Dec 31 23:59 CET 2025
+const OSLO_TIME_ZONE = "Europe/Oslo";
+const osloPartsFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: OSLO_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
 
-function getDateRange(range: string) {
-  const now = new Date();
-  const yearStart = YEAR_START_2026;
-
-  let periodStart: Date;
-  let prevPeriodStart: Date;
-  let prevPeriodEnd: Date;
-
-  if (range === "7d") {
-    periodStart = new Date(now);
-    periodStart.setDate(periodStart.getDate() - 7);
-    prevPeriodEnd = new Date(periodStart);
-    prevPeriodStart = new Date(prevPeriodEnd);
-    prevPeriodStart.setDate(prevPeriodStart.getDate() - 7);
-  } else if (range === "90d") {
-    periodStart = new Date(now);
-    periodStart.setDate(periodStart.getDate() - 90);
-    prevPeriodEnd = new Date(periodStart);
-    prevPeriodStart = new Date(prevPeriodEnd);
-    prevPeriodStart.setDate(prevPeriodStart.getDate() - 90);
-  } else if (range === "year") {
-    periodStart = yearStart;
-    prevPeriodStart = YEAR_START_2025;
-    prevPeriodEnd   = YEAR_END_2025;
-  } else {
-    // default 30d
-    periodStart = new Date(now);
-    periodStart.setDate(periodStart.getDate() - 30);
-    prevPeriodEnd = new Date(periodStart);
-    prevPeriodStart = new Date(prevPeriodEnd);
-    prevPeriodStart.setDate(prevPeriodStart.getDate() - 30);
-  }
-
-  // Clamp to 2026
-  if (periodStart < yearStart) periodStart = yearStart;
-  if (prevPeriodStart < yearStart) prevPeriodStart = yearStart;
-
-  return { periodStart, prevPeriodStart, prevPeriodEnd, now };
+interface DateParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
 }
 
-// --- Stage ID mapping across all M51 pipelines ---
-const WON_STAGES = new Set([
-  "closedwon",             // M51-Pipe
-  "1499916",               // Salg: Vunnet
-  "918641",                // Eirik test: Kontrakt vunnet
-  "1090547557",            // M51-2025: Closed Won
-  "18284046",              // Byrå på tur: Vunnet
-  "13114424",              // Innovation Support: Vunnet
-  "deal_registration_closed_won", // HubSpot Shared
-]);
-
-const LOST_STAGES = new Set([
-  "closedlost",            // M51-Pipe
-  "1499917",               // Salg: Tapt
-  "918642",                // Eirik test: Kontrakt tapt
-  "1090547558",            // M51-2025: Closed Lost
-  "18298898",              // Byrå på tur: Tapt
-  "1090547555",            // M51-2025: Ikke aktuelt
-  "11359580",              // Innovation Support: Ikke aktuelt
-  "deal_registration_closed_lost", // HubSpot Shared
-]);
-
-const MEETING_BOOKED_STAGES = new Set([
-  "appointmentscheduled",  // M51-Pipe
-  "1499914",               // Salg: Møte booket
-  "918638",                // Eirik test: Møte booket
-  "1090547553",            // M51-2025: Møte booket
-  "18284044",              // Byrå på tur: Møte booket
-  "11374877",              // Innovation Support: Møte booket
-  "13060019",              // Asgeir: Møte booket
-]);
-
-const MEETING_HELD_STAGES = new Set([
-  "presentationscheduled", // M51-Pipe
-  "19052976",              // Salg: Møte gjennomført
-  "918639",                // Eirik test: Møte gjennomført
-  "1090547554",            // M51-2025: Møte gjennomført
-  "13078631",              // Innovation Support: Møte gjennomført
-]);
-
-const TRIAL_STAGES = new Set([
-  "1405622350",            // Salg: Gratis prøveperiode (14 dager)
-]);
-
-const OFFER_SENT_STAGES = new Set([
-  "1499915",               // Salg: Tilbud sendt
-  "918640",                // Eirik test: Tilbud sendt
-  "9b4b0b98-bb9d-4bbc-9f3b-09fc6a6571fd", // M51-Pipe: Tilbud sendt
-  "1090547556",            // M51-2025: Contract Sent
-  "18284045",              // Byrå på tur: Tilbud sendt
-]);
-
-// A deal has "progressed" if it reached meeting held or beyond
-function hasReachedStage(stage: string, minStage: "booked" | "held" | "offer" | "won"): boolean {
-  if (minStage === "won") return WON_STAGES.has(stage);
-  if (minStage === "offer") return WON_STAGES.has(stage) || OFFER_SENT_STAGES.has(stage);
-  if (minStage === "held") return WON_STAGES.has(stage) || OFFER_SENT_STAGES.has(stage) || TRIAL_STAGES.has(stage) || MEETING_HELD_STAGES.has(stage);
-  // booked
-  return WON_STAGES.has(stage) || OFFER_SENT_STAGES.has(stage) || TRIAL_STAGES.has(stage) || MEETING_HELD_STAGES.has(stage) || MEETING_BOOKED_STAGES.has(stage);
+interface DealActivity {
+  deal: HubSpotDeal;
+  date: Date;
 }
 
-// --- Date helpers ---
-function startOfWeek(date: Date) {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
+function osloParts(date: Date): DateParts {
+  const values = Object.fromEntries(
+    osloPartsFormatter
+      .formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)]),
+  );
+  return values as unknown as DateParts;
+}
+
+function osloOffsetMilliseconds(date: Date): number {
+  const parts = osloParts(date);
+  const representedAsUtc = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second,
+  );
+  return representedAsUtc - Math.floor(date.getTime() / 1000) * 1000;
+}
+
+function osloMidnight(year: number, month: number, day: number): Date {
+  const normalized = new Date(Date.UTC(year, month - 1, day));
+  const utcMidnight = Date.UTC(
+    normalized.getUTCFullYear(),
+    normalized.getUTCMonth(),
+    normalized.getUTCDate(),
+  );
+  let result = utcMidnight - osloOffsetMilliseconds(new Date(utcMidnight));
+  result = utcMidnight - osloOffsetMilliseconds(new Date(result));
+  return new Date(result);
+}
+
+function addOsloDays(date: Date, days: number): Date {
+  const parts = osloParts(date);
+  return osloMidnight(parts.year, parts.month, parts.day + days);
+}
+
+function startOfOsloWeek(date: Date): Date {
+  const parts = osloParts(date);
+  const utcDate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  const weekday = utcDate.getUTCDay();
+  const daysSinceMonday = weekday === 0 ? 6 : weekday - 1;
+  return osloMidnight(parts.year, parts.month, parts.day - daysSinceMonday);
 }
 
 function getISOWeekAndYear(date: Date): { week: number; year: number } {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
-  const year = d.getFullYear(); // ISO year — may differ from calendar year at boundaries
-  const week1 = new Date(year, 0, 4);
-  const week = 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
-  return { week, year };
+  const parts = osloParts(date);
+  const localDate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  const weekday = localDate.getUTCDay() || 7;
+  localDate.setUTCDate(localDate.getUTCDate() + 4 - weekday);
+  const isoYear = localDate.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(isoYear, 0, 1));
+  const week = Math.ceil(
+    ((localDate.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7,
+  );
+  return { week, year: isoYear };
+}
+
+function getDateRange(range: string) {
+  const now = new Date();
+  const current = osloParts(now);
+  const todayStart = osloMidnight(current.year, current.month, current.day);
+
+  if (range === "year") {
+    const periodStart = osloMidnight(current.year, 1, 1);
+    const prevPeriodStart = osloMidnight(current.year - 1, 1, 1);
+    const prevPeriodEnd = new Date(periodStart.getTime() - 1);
+    return {
+      periodStart,
+      prevPeriodStart,
+      prevPeriodEnd,
+      now,
+      year: current.year,
+    };
+  }
+
+  const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
+  const periodStart = addOsloDays(todayStart, -(days - 1));
+  const prevPeriodEnd = new Date(periodStart.getTime() - 1);
+  const prevPeriodStart = addOsloDays(periodStart, -days);
+  return {
+    periodStart,
+    prevPeriodStart,
+    prevPeriodEnd,
+    now,
+    year: current.year,
+  };
 }
 
 function percentChange(current: number, previous: number): number {
@@ -139,463 +143,408 @@ function percentChange(current: number, previous: number): number {
   return Math.round(((current - previous) / previous) * 1000) / 10;
 }
 
+function historyFor(deal: HubSpotDeal): HubSpotHistoryEntry[] {
+  const history = deal.propertiesWithHistory?.dealstage ?? [];
+  if (history.length > 0) {
+    return [...history].sort(
+      (left, right) =>
+        new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+    );
+  }
+
+  const stage = deal.properties.dealstage;
+  const timestamp =
+    deal.properties.closedate ??
+    deal.properties.createdate ??
+    deal.properties.hs_lastmodifieddate;
+  return stage && timestamp ? [{ value: stage, timestamp }] : [];
+}
+
+function activitiesInPeriod(
+  deals: HubSpotDeal[],
+  stages: ReadonlySet<string>,
+  start: Date,
+  end: Date,
+): DealActivity[] {
+  const activities: DealActivity[] = [];
+  for (const deal of deals) {
+    const event = historyFor(deal).find((entry) => {
+      const date = new Date(entry.timestamp);
+      return stages.has(entry.value) && date >= start && date <= end;
+    });
+    if (event) activities.push({ deal, date: new Date(event.timestamp) });
+  }
+  return activities;
+}
+
+function dealsCreatedInPeriod(
+  deals: HubSpotDeal[],
+  start: Date,
+  end: Date,
+): DealActivity[] {
+  return deals.flatMap((deal) => {
+    if (!deal.properties.createdate) return [];
+    const date = new Date(deal.properties.createdate);
+    return date >= start && date <= end ? [{ deal, date }] : [];
+  });
+}
+
+function categorizeMeetingSource(src: string, d1: string, d2: string): string {
+  if (d1.includes("webinar") || d2.includes("webinar")) return "Webinar";
+  if (
+    d1.includes("seminar") ||
+    d1.includes("konferansen") ||
+    d1.includes("julefest") ||
+    d2.includes("seminar") ||
+    d2.includes("konferanse")
+  ) {
+    return "Seminar / Event";
+  }
+  if (
+    src === "EMAIL_MARKETING" ||
+    d1 === "sequences" ||
+    d1 === "hs_email" ||
+    d1 === "email_integration" ||
+    d2.includes("sequence")
+  ) {
+    return "E-post / Sekvens";
+  }
+  if (src === "PAID_SOCIAL" || src === "PAID_SEARCH") return "Betalt (ads)";
+  if (src === "SOCIAL_MEDIA") return "Sosiale medier";
+  if (src === "ORGANIC_SEARCH" || src === "REFERRALS" || src === "AI_REFERRALS") {
+    return "Inbound";
+  }
+  if (src === "OFFLINE") return "Direkte salg";
+  if (src === "DIRECT_TRAFFIC") return "Direkte kontakt";
+  return "Ukjent";
+}
+
+const SOURCE_COLORS: Record<string, string> = {
+  Webinar: "#3C6E71",
+  "Seminar / Event": "#0EA5E9",
+  "E-post / Sekvens": "#F59E0B",
+  "Betalt (ads)": "#FF3B3D",
+  "Sosiale medier": "#8B5CF6",
+  Inbound: "#10B981",
+  "Direkte salg": "#6366F1",
+  "Direkte kontakt": "#9CA3AF",
+  Ukjent: "#D1D5DB",
+};
+
+function periodText(range: string, year: number) {
+  if (range === "7d") {
+    return { label: "siste 7 dager", comparison: "mot forrige 7 dager" };
+  }
+  if (range === "90d") {
+    return { label: "siste 90 dager", comparison: "mot forrige 90 dager" };
+  }
+  if (range === "year") {
+    return { label: String(year), comparison: `mot ${year - 1}` };
+  }
+  return { label: "siste 30 dager", comparison: "mot forrige 30 dager" };
+}
+
 export async function GET(request: NextRequest) {
   try {
-    const forceRefresh = request.nextUrl.searchParams.get("refresh") === "true";
-    if (forceRefresh) clearCache();
-    const { deals, contacts, meetings, owners, dealMRR } = await getCachedDashboardData();
+    if (request.nextUrl.searchParams.get("refresh") === "true") clearCache();
 
-    const range = request.nextUrl.searchParams.get("range") || "30d";
-    const dealFilter = request.nextUrl.searchParams.get("dealFilter") || "all";
-    const { periodStart, prevPeriodStart, prevPeriodEnd, now } = getDateRange(range);
-    const yearStart = YEAR_START_2026;
-    const weekStart = startOfWeek(now); // used for meetingsOverTime chart
+    const range = request.nextUrl.searchParams.get("range") ?? "30d";
+    const dealFilter = request.nextUrl.searchParams.get("dealFilter") ?? "all";
+    const { periodStart, prevPeriodStart, prevPeriodEnd, now, year } =
+      getDateRange(range);
+    const yearStart = osloMidnight(year, 1, 1);
+    const { deals, dealMRR } = await getCachedDashboardData();
 
-    // Filter locally: include deals relevant to 2026.
-    // closedate >= 2026 catches deals created pre-2026 but won in 2026 (e.g. Activeon).
-    // createdate >= 2026 catches new deals created this year.
-    const deals2026base = deals.filter((d: any) => {
-      const closedate = d.properties.closedate ? new Date(d.properties.closedate) : null;
-      const createdate = d.properties.createdate ? new Date(d.properties.createdate) : null;
-      return (closedate && closedate >= yearStart) || (createdate && createdate >= yearStart);
+    // The product filter now applies consistently to all deal-based metrics.
+    const filteredDeals =
+      dealFilter === "ai-os"
+        ? deals.filter((deal) => AI_OS_PATTERN.test(deal.properties.dealname ?? ""))
+        : deals;
+
+    const currentYearDeals = filteredDeals.filter((deal) => {
+      const created = deal.properties.createdate
+        ? new Date(deal.properties.createdate)
+        : null;
+      const closed = deal.properties.closedate
+        ? new Date(deal.properties.closedate)
+        : null;
+      return (created && created >= yearStart) || (closed && closed >= yearStart);
     });
 
-    // Apply deal type filter: "ai-os" shows only M51 AI OS deals.
-    // These are deals whose name contains any of the M51 AI OS product tiers/types:
-    // "AI OS", "Pilotkunde" / "Pilot", "Pro", "Starter", "Enterprise", "Agency"
-    // Matches deal names that belong to the M51 AI OS product line:
-    // "AI OS", any pilot variant, or product tiers (Pro / Starter / Enterprise / Agency / X)
-    const AI_OS_PATTERN = /ai.?os|pil{1,2}ot|\bpro\b|\bstarter\b|\benterprise\b|\bagency\b|\bdemo\b|\bx\b/i;
-    const deals2026 = dealFilter === "ai-os"
-      ? deals2026base.filter((d: any) =>
-          AI_OS_PATTERN.test(d.properties.dealname ?? "")
-        )
-      : deals2026base;
-
-    // --- Categorize by stage ---
-    const wonDeals = deals2026.filter((d: any) => WON_STAGES.has(d.properties.dealstage));
-    const lostDeals = deals2026.filter((d: any) => LOST_STAGES.has(d.properties.dealstage));
-
-
-
-    // Won this period vs prev period.
-    // Use closedate if set; fall back to createdate for deals created directly as Won.
-    const wonDate = (d: any) =>
-      new Date(d.properties.closedate ?? d.properties.createdate);
-    const wonThisPeriod = wonDeals.filter((d: any) => wonDate(d) >= periodStart);
-    const wonPrevPeriod = wonDeals.filter(
-      (d: any) => wonDate(d) >= prevPeriodStart && wonDate(d) <= prevPeriodEnd
+    const wonThisPeriod = activitiesInPeriod(
+      filteredDeals,
+      WON_STAGES,
+      periodStart,
+      now,
     );
-    // MRR per deal: bruk line item-sum hvis tilgjengelig (monthly priser bekreftet).
-    // Fallback: pilot = monthly amount, andre = årsverdi / 12.
-    const toMonthly = (d: any): number => {
-      const lineItemMRR = (dealMRR as Map<string, number> | undefined)?.get?.(d.id);
-      if (lineItemMRR !== undefined && lineItemMRR > 0) return lineItemMRR;
-      const amount = parseFloat(d.properties.amount) || 0;
-      return /pil{1,2}ot/i.test(d.properties.dealname ?? "") ? amount : amount / 12;
+    const wonPrevPeriod = activitiesInPeriod(
+      filteredDeals,
+      WON_STAGES,
+      prevPeriodStart,
+      prevPeriodEnd,
+    );
+    const lostThisPeriod = activitiesInPeriod(
+      filteredDeals,
+      LOST_STAGES,
+      periodStart,
+      now,
+    );
+    const lostPrevPeriod = activitiesInPeriod(
+      filteredDeals,
+      LOST_STAGES,
+      prevPeriodStart,
+      prevPeriodEnd,
+    );
+    const meetingsThisPeriod = activitiesInPeriod(
+      filteredDeals,
+      BOOKED_OR_LATER_STAGES,
+      periodStart,
+      now,
+    );
+    const meetingsPrevPeriod = activitiesInPeriod(
+      filteredDeals,
+      BOOKED_OR_LATER_STAGES,
+      prevPeriodStart,
+      prevPeriodEnd,
+    );
+    const meetingsHeldPeriod = activitiesInPeriod(
+      filteredDeals,
+      HELD_OR_LATER_STAGES,
+      periodStart,
+      now,
+    );
+    const meetingsHeldPrev = activitiesInPeriod(
+      filteredDeals,
+      HELD_OR_LATER_STAGES,
+      prevPeriodStart,
+      prevPeriodEnd,
+    );
+    const offersSentPeriod = activitiesInPeriod(
+      filteredDeals,
+      OFFER_OR_LATER_STAGES,
+      periodStart,
+      now,
+    );
+    const offersSentPrev = activitiesInPeriod(
+      filteredDeals,
+      OFFER_OR_LATER_STAGES,
+      prevPeriodStart,
+      prevPeriodEnd,
+    );
+
+    const toMonthly = (deal: HubSpotDeal): number => {
+      const lineItemMRR = dealMRR.get(deal.id);
+      if (lineItemMRR !== undefined) return lineItemMRR;
+      const amount = Number.parseFloat(deal.properties.amount ?? "") || 0;
+      const dealName = deal.properties.dealname ?? "";
+      if (!AI_OS_PATTERN.test(dealName)) return 0;
+      return /pil{1,2}ot/i.test(dealName) ? amount : amount / 12;
     };
 
-const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly(d), 0));
+    const currentWonDeals = currentYearDeals.filter((deal) =>
+      WON_STAGES.has(deal.properties.dealstage ?? ""),
+    );
+    const totalMRR = Math.round(
+      currentWonDeals.reduce((sum, deal) => sum + toMonthly(deal), 0),
+    );
     const totalARR = totalMRR * 12;
     const totalMinARR = totalMRR * 3;
-
-    // Ny MRR denne perioden vs forrige (for trend-pil)
-    const newMRRThisPeriod = wonThisPeriod.reduce((s: number, d: any) => s + toMonthly(d), 0);
-    const newMRRPrevPeriod = wonPrevPeriod.reduce((s: number, d: any) => s + toMonthly(d), 0);
+    const newMRRThisPeriod = wonThisPeriod.reduce(
+      (sum, { deal }) => sum + toMonthly(deal),
+      0,
+    );
+    const newMRRPrevPeriod = wonPrevPeriod.reduce(
+      (sum, { deal }) => sum + toMonthly(deal),
+      0,
+    );
     const mrrTrend = percentChange(newMRRThisPeriod, newMRRPrevPeriod);
 
-    // --- Customers ---
-    const totalCustomers = wonDeals.length;
-    const customersThisPeriod = wonThisPeriod.length;
+    // Standard close rate: won decisions divided by all closed decisions.
+    const decisionsThisPeriod = wonThisPeriod.length + lostThisPeriod.length;
+    const decisionsPrevPeriod = wonPrevPeriod.length + lostPrevPeriod.length;
+    const closingRate = decisionsThisPeriod
+      ? Math.round((wonThisPeriod.length / decisionsThisPeriod) * 100)
+      : 0;
+    const prevClosingRate = decisionsPrevPeriod
+      ? Math.round((wonPrevPeriod.length / decisionsPrevPeriod) * 100)
+      : 0;
 
-    // lostThisPeriod brukes i churn-seksjonen
-    const lostThisPeriod = lostDeals.filter(
-      (d: any) => new Date(d.properties.closedate) >= periodStart
-    );
-    // Closing rate beregnes etter meetingsHeldPeriod er definert (se lenger nede)
-
-    // --- Meetings: HubSpot meeting activities filtered by title keywords ---
-    // Counts actual calendar meetings logged in HubSpot where the title contains
-    // one of: "demo", "agenter", "ai", "m51" — these are M51 sales/discovery meetings.
-    // hs_timestamp = when the meeting is scheduled (used as the meeting date).
-    const MEETING_TITLE_PATTERN = /demo|agenter|\bai\b|m51/i;
-    // Exclude recurring customer meetings, events, and check-ins that aren't AI OS sales meetings:
-    // - "månedsmøte"   → monthly check-ins with existing customers
-    // - "frokostseminar" / "seminar" → external events / breakfast seminars
-    // - "styremøte"    → board meetings
-    // - "m51 //"       → M51-initiated existing-customer meetings (M51 on the left of "//")
-    const MEETING_EXCLUDE_PATTERN = /månedsmøte|frokostseminar|\bstyremøte\b|m51\s*\/\//i;
-
-    // bookedDate = when the meeting was created/logged in HubSpot (when it was "booked")
-    // meetingDate = when the meeting actually takes place (hs_timestamp)
-    // These two dates are used for different KPIs:
-    //   "Møte booket"      → bookedDate (pipeline activity: when did we schedule this?)
-    //   "Møte gjennomført" → meetingDate, capped at now (when did it actually happen?)
-    const bookedDate = (m: any) => new Date(m.properties.hs_createdate);
-    const meetingDate = (m: any) =>
-      new Date(m.properties.hs_timestamp ?? m.properties.hs_meeting_start_time);
-
-    // AI OS sales meetings only started in week 8-9 (mid-Feb 2026).
-    // Meetings before this date match the same keywords ("demo", "AI", "agenter", "M51")
-    // but are unrelated M51 agency/marketing work — not AI OS pipeline activity.
-    // We clamp all meeting-based metrics to this floor so 90d/year views aren't inflated.
-    const AI_OS_MEETINGS_START = new Date("2026-02-15T23:00:00Z"); // Feb 16 00:00 CET (UTC+1)
-    const meetingsFloor = (d: Date) => d > AI_OS_MEETINGS_START ? d : AI_OS_MEETINGS_START;
-
-    const salesMeetings2026 = meetings.filter((m: any) => {
-      const title = m.properties.hs_meeting_title ?? "";
-      return MEETING_TITLE_PATTERN.test(title) && !MEETING_EXCLUDE_PATTERN.test(title);
-    });
-
-    // "Booket" = deals that have reached meeting-booked stage, counted by createdate.
-    // Using deals instead of calendar activities avoids double-counting rescheduled meetings.
-    // Always uses deals2026base (unfiltered by AI OS) since meeting KPIs show all meetings.
-    const meetingsThisPeriod = deals2026base.filter((d: any) =>
-      hasReachedStage(d.properties.dealstage, "booked") &&
-      new Date(d.properties.createdate) >= meetingsFloor(periodStart)
-    );
-    const meetingsPrevPeriod = deals2026base.filter((d: any) =>
-      hasReachedStage(d.properties.dealstage, "booked") &&
-      new Date(d.properties.createdate) >= meetingsFloor(prevPeriodStart) &&
-      new Date(d.properties.createdate) <= prevPeriodEnd
-    );
-
-    // --- Meetings leaderboard: who booked the most meetings this period ---
-    const ownerMap = new Map<string, string>();
-    for (const o of (owners ?? [])) {
-      // v2 uses ownerId, v3 uses id
-      const id = String(o.ownerId ?? o.id);
-      // v2 uses firstName/lastName, v3 same
-      const name = [o.firstName, o.lastName].filter(Boolean).join(" ") || o.email || `Bruker ${id}`;
-      ownerMap.set(id, name);
+    const ownerCounts = new Map<string, number>();
+    for (const { deal } of meetingsThisPeriod) {
+      const ownerId = deal.properties.hubspot_owner_id;
+      if (ownerId) ownerCounts.set(ownerId, (ownerCounts.get(ownerId) ?? 0) + 1);
     }
-    const ownerCounts: Record<string, number> = {};
-    for (const m of meetingsThisPeriod) {
-      const ownerId = m.properties.hubspot_owner_id;
-      if (ownerId) ownerCounts[ownerId] = (ownerCounts[ownerId] ?? 0) + 1;
-    }
-    const meetingsLeaderboard = Object.entries(ownerCounts)
+    const meetingsLeaderboard = [...ownerCounts]
       .map(([id, count]) => ({
-        // Manual mappings take precedence so renamed/reassigned HubSpot users
-        // are shown with the current dashboard name.
-        name: OWNER_NAMES[id] ?? ownerMap.get(id) ?? `Bruker ${id}`,
+        name: OWNER_NAMES[id] ?? `Bruker ${id}`,
         count,
       }))
-      .sort((a, b) => b.count - a.count);
+      .sort((left, right) => right.count - left.count);
 
-    // --- Revenue over time (monthly in 2026) ---
     const mrrOverTime = [];
-    for (let m = 0; m <= now.getMonth(); m++) {
-      const mStart = new Date(2026, m, 1);
-      const mEnd = new Date(2026, m + 1, 0, 23, 59, 59);
-      const label = mStart.toLocaleString("en", { month: "short" });
-      const monthRevenue = wonDeals
-        .filter(
-          (d: any) =>
-            new Date(d.properties.closedate) >= mStart &&
-            new Date(d.properties.closedate) <= mEnd
-        )
-        .reduce((s: number, d: any) => s + toMonthly(d), 0);
-      mrrOverTime.push({ label, value: Math.round(monthRevenue) });
+    for (let month = 1; month <= osloParts(now).month; month += 1) {
+      const monthStart = osloMidnight(year, month, 1);
+      const monthEnd = new Date(osloMidnight(year, month + 1, 1).getTime() - 1);
+      const wonInMonth = activitiesInPeriod(
+        filteredDeals,
+        WON_STAGES,
+        monthStart,
+        monthEnd > now ? now : monthEnd,
+      );
+      mrrOverTime.push({
+        label: monthStart.toLocaleString("no-NO", {
+          month: "short",
+          timeZone: OSLO_TIME_ZONE,
+        }),
+        value: Math.round(
+          wonInMonth.reduce((sum, { deal }) => sum + toMonthly(deal), 0),
+        ),
+      });
     }
 
-    // --- Meetings over time (granularity adapts to selected range) ---
-    // Uses deal createdate (consistent with KPI card — counts when deal/meeting was booked)
-    const meetingsOverTime: { label: string; value: number }[] = [];
-    const bookedDeals2026 = deals2026base.filter((d: any) =>
-      hasReachedStage(d.properties.dealstage, "booked")
-    );
-    const dealBookedDate = (d: any) => new Date(d.properties.createdate);
-
+    const meetingsOverTime: Array<{ label: string; value: number }> = [];
     if (range === "7d") {
-      // Daily — last 7 days, CET day boundaries
-      const CET_OFFSET_MS = 60 * 60 * 1000; // UTC+1
-      for (let i = 6; i >= 0; i--) {
-        const nowInCET = new Date(now.getTime() + CET_OFFSET_MS);
-        const cetDay = new Date(nowInCET);
-        cetDay.setUTCDate(cetDay.getUTCDate() - i);
-        cetDay.setUTCHours(0, 0, 0, 0);
-        const day = new Date(cetDay.getTime() - CET_OFFSET_MS);
-        const dayEnd = new Date(day.getTime() + 24 * 60 * 60 * 1000 - 1);
-        const label = cetDay.toLocaleString("no", { weekday: "short" });
-        const count = bookedDeals2026.filter((d: any) => {
-          const cd = dealBookedDate(d);
-          return cd >= AI_OS_MEETINGS_START && cd >= day && cd <= dayEnd;
-        }).length;
-        meetingsOverTime.push({ label, value: count });
+      for (let day = 0; day < 7; day += 1) {
+        const start = addOsloDays(periodStart, day);
+        const end = new Date(addOsloDays(start, 1).getTime() - 1);
+        meetingsOverTime.push({
+          label: start.toLocaleString("no-NO", {
+            weekday: "short",
+            timeZone: OSLO_TIME_ZONE,
+          }),
+          value: meetingsThisPeriod.filter(
+            ({ date }) => date >= start && date <= end,
+          ).length,
+        });
       }
     } else if (range === "year") {
-      // Monthly — each month of 2026 so far
-      for (let m = 0; m <= now.getMonth(); m++) {
-        const mStart = new Date(2026, m, 1);
-        const mEnd = new Date(2026, m + 1, 0, 23, 59, 59);
-        const label = mStart.toLocaleString("no", { month: "short" });
-        const count = bookedDeals2026.filter((d: any) => {
-          const cd = dealBookedDate(d);
-          return cd >= AI_OS_MEETINGS_START && cd >= mStart && cd <= mEnd;
-        }).length;
-        meetingsOverTime.push({ label, value: count });
+      for (let month = 1; month <= osloParts(now).month; month += 1) {
+        const start = osloMidnight(year, month, 1);
+        const end = new Date(osloMidnight(year, month + 1, 1).getTime() - 1);
+        meetingsOverTime.push({
+          label: start.toLocaleString("no-NO", {
+            month: "short",
+            timeZone: OSLO_TIME_ZONE,
+          }),
+          value: meetingsThisPeriod.filter(
+            ({ date }) => date >= start && date <= end,
+          ).length,
+        });
       }
     } else {
-      // Weekly — for 30d or 90d
-      const days = range === "90d" ? 90 : 30;
-      const periodStartDate = new Date(now);
-      periodStartDate.setDate(periodStartDate.getDate() - days);
-      const clampedStart = periodStartDate < AI_OS_MEETINGS_START ? AI_OS_MEETINGS_START : periodStartDate;
-      let wStart = startOfWeek(clampedStart);
-      while (wStart <= now) {
-        const wEnd = new Date(wStart);
-        wEnd.setDate(wEnd.getDate() + 7);
-        const { week: isoWeek, year: isoYear } = getISOWeekAndYear(wStart);
-        const label = isoYear < now.getFullYear() ? `Uke ${isoWeek} '${String(isoYear).slice(2)}` : `Uke ${isoWeek}`;
-        const count = bookedDeals2026.filter((d: any) => {
-          const cd = dealBookedDate(d);
-          return cd >= AI_OS_MEETINGS_START && cd >= wStart && cd < wEnd;
-        }).length;
-        meetingsOverTime.push({ label, value: count });
-        wStart = new Date(wEnd);
+      let weekStart = startOfOsloWeek(periodStart);
+      while (weekStart <= now) {
+        const weekEnd = new Date(addOsloDays(weekStart, 7).getTime() - 1);
+        const iso = getISOWeekAndYear(weekStart);
+        meetingsOverTime.push({
+          label: iso.year < year ? `Uke ${iso.week} '${String(iso.year).slice(2)}` : `Uke ${iso.week}`,
+          value: meetingsThisPeriod.filter(
+            ({ date }) =>
+              date >= periodStart && date >= weekStart && date <= weekEnd,
+          ).length,
+        });
+        weekStart = addOsloDays(weekStart, 7);
       }
     }
 
-    // --- Meeting source breakdown ---
-    // Uses hs_latest_source from the contact associated with the deal (more accurate than deal-level source).
-    // Categorises each meeting-booked deal into a human-readable channel bucket.
-    function categorizeMeetingSource(src: string, d1: string, d2: string): string {
-
-      if (d1.includes("webinar") || d2.includes("webinar")) return "Webinar";
-      if (
-        d1.includes("seminar") ||
-        d1.includes("konferansen") ||
-        d1.includes("julefest") ||
-        d2.includes("seminar") ||
-        d2.includes("konferanse")
-      )
-        return "Seminar / Event";
-      if (
-        src === "EMAIL_MARKETING" ||
-        d1 === "sequences" ||
-        d1 === "hs_email" ||
-        d1 === "email_integration" ||
-        d2.includes("sequence")
-      )
-        return "E-post / Sekvens";
-      if (src === "PAID_SOCIAL" || src === "PAID_SEARCH") return "Betalt (ads)";
-      if (src === "SOCIAL_MEDIA") return "Sosiale medier";
-      if (src === "ORGANIC_SEARCH" || src === "REFERRALS" || src === "AI_REFERRALS")
-        return "Inbound";
-      if (src === "OFFLINE") return "Direkte salg";
-      if (src === "DIRECT_TRAFFIC") return "Direkte kontakt";
-      return "Ukjent";
+    let contactSources = new Map<
+      string,
+      { src: string; d1: string; d2: string }
+    >();
+    try {
+      contactSources = await fetchContactSourcesForDeals(
+        meetingsThisPeriod.map(({ deal }) => deal.id),
+      );
+    } catch (error) {
+      console.warn("Contact source fetch failed; using Unknown.", error);
     }
 
-    const SOURCE_COLORS: Record<string, string> = {
-      "Webinar":          "#3C6E71",
-      "Seminar / Event":  "#0EA5E9",
-      "E-post / Sekvens": "#F59E0B",
-      "Betalt (ads)":     "#FF3B3D",
-      "Sosiale medier":   "#8B5CF6",
-      "Inbound":          "#10B981",
-      "Direkte salg":     "#6366F1",
-      "Direkte kontakt":  "#9CA3AF",
-      "Ukjent":           "#D1D5DB",
-    };
-
-    // periodDeals: deals created in the selected period (also used for pipeline KPI and source breakdown)
-    const periodDeals = range === "year" ? deals2026 : deals2026.filter(
-      (d: any) => new Date(d.properties.createdate) >= periodStart
-    );
-
-    // Count by source for deals that have reached the meeting-booked stage in the period.
-    // Source is fetched from the associated contact's hs_latest_source for better accuracy.
-    const sourceDeals = periodDeals.filter((d: any) =>
-      hasReachedStage(d.properties.dealstage, "booked")
-    );
-    const contactSources = await fetchContactSourcesForDeals(sourceDeals.map((d: any) => d.id));
-    const sourceCounts: Record<string, number> = {};
-    for (const d of sourceDeals) {
-      const cs = contactSources.get(d.id);
-      const cat = cs
-        ? categorizeMeetingSource(cs.src, cs.d1, cs.d2)
+    const sourceCounts = new Map<string, number>();
+    for (const { deal } of meetingsThisPeriod) {
+      const source = contactSources.get(deal.id);
+      const category = source
+        ? categorizeMeetingSource(source.src, source.d1, source.d2)
         : "Ukjent";
-      sourceCounts[cat] = (sourceCounts[cat] ?? 0) + 1;
+      sourceCounts.set(category, (sourceCounts.get(category) ?? 0) + 1);
     }
+    const meetingsBySource = [...sourceCounts]
+      .map(([name, value]) => ({
+        name,
+        value,
+        color: SOURCE_COLORS[name] ?? SOURCE_COLORS.Ukjent,
+      }))
+      .sort((left, right) => right.value - left.value);
 
-    const meetingsBySource = Object.entries(sourceCounts)
-      .map(([name, value]) => ({ name, value, color: SOURCE_COLORS[name] ?? "#D1D5DB" }))
-      .sort((a, b) => b.value - a.value);
-
-    // funnelStages computed below, after meetingsHeldPeriod + offersSentPeriod are defined
-
-    // --- Churn ---
-    const lostInPeriod = lostThisPeriod.length;
-    const lostInPrevPeriod = lostDeals.filter(
-      (d: any) =>
-        new Date(d.properties.closedate) >= prevPeriodStart &&
-        new Date(d.properties.closedate) <= prevPeriodEnd
-    ).length;
-    const churnRate =
-      totalCustomers > 0
-        ? Math.round((lostInPeriod / totalCustomers) * 1000) / 10
-        : 0;
-    const prevChurnRate =
-      totalCustomers > 0
-        ? Math.round((lostInPrevPeriod / totalCustomers) * 1000) / 10
-        : 0;
-
-    // 3-month retention
-    const threeMonthsAgo = new Date(now);
-    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-    const wonBeforeThreeMonths = wonDeals.filter(
-      (d: any) =>
-        new Date(d.properties.closedate) >= yearStart &&
-        new Date(d.properties.closedate) <= threeMonthsAgo
-    ).length;
-    const lostSinceThen = lostDeals.filter(
-      (d: any) => new Date(d.properties.closedate) >= threeMonthsAgo
-    ).length;
-    const retention =
-      wonBeforeThreeMonths > 0
-        ? Math.round(((wonBeforeThreeMonths - lostSinceThen) / wonBeforeThreeMonths) * 100)
-        : totalCustomers > 0 ? 100 : 0;
-
-    // Period labels
-    const periodLabel =
-      range === "7d" ? "Last 7 Days" :
-      range === "90d" ? "Last 90 Days" :
-      range === "year" ? "2026" : "Last 30 Days";
-    const vsLabel =
-      range === "7d" ? "vs prev 7 days" :
-      range === "90d" ? "vs prev 90 days" :
-      range === "year" ? "vs 2025" : "vs prev 30 days";
-
-    // --- Deals in pipeline (active, period) ---
-    const pipelineDeals = periodDeals.filter(
-      (d: any) => !WON_STAGES.has(d.properties.dealstage) && !LOST_STAGES.has(d.properties.dealstage)
-    );
-    const prevPipelineDeals = deals2026.filter(
-      (d: any) =>
-        new Date(d.properties.createdate) >= prevPeriodStart &&
-        new Date(d.properties.createdate) <= prevPeriodEnd &&
-        !WON_STAGES.has(d.properties.dealstage) &&
-        !LOST_STAGES.has(d.properties.dealstage)
-    );
-
-    // --- Meetings held: sales meetings where hs_timestamp is in the past ---
-    // Using calendar data (HubSpot meeting activities) is more accurate than deal stages.
-    // A meeting is "held" if it took place in the period (>= floor) AND hs_timestamp < now.
-    const meetingsHeldPeriod = salesMeetings2026.filter(
-      (m: any) => meetingDate(m) >= meetingsFloor(periodStart) && meetingDate(m) <= now
-    );
-    const meetingsHeldPrev = salesMeetings2026.filter(
-      (m: any) => meetingDate(m) >= meetingsFloor(prevPeriodStart) && meetingDate(m) <= prevPeriodEnd
-    );
-    // --- Closing Rate: Kunder vunnet / Møte gjennomført i perioden ---
-    // Mer meningsfull for M51 enn won/(won+lost) siden closedate sjelden settes på tapte deals
-    const closingRate = meetingsHeldPeriod.length > 0
-      ? Math.round((wonThisPeriod.length / meetingsHeldPeriod.length) * 100)
-      : 0;
-    const prevClosingRate = meetingsHeldPrev.length > 0
-      ? Math.round((wonPrevPeriod.length / meetingsHeldPrev.length) * 100)
-      : 0;
-
-    // --- Tilbud sendt: deals that have REACHED the offer stage (currently there, or progressed to won) ---
-    // Previous logic only counted deals currently stuck in the offer stage, missing deals that
-    // moved on to Vunnet. Now we count both:
-    //   - Deals still in OFFER_SENT_STAGES: use hs_lastmodifieddate as proxy for when offer was sent
-    //   - Deals in WON_STAGES: use closedate (they must have received an offer before winning)
-    const hasReachedOffer = (d: any) =>
-      OFFER_SENT_STAGES.has(d.properties.dealstage) || WON_STAGES.has(d.properties.dealstage);
-
-    const offersSentPeriod = deals2026.filter((d: any) => {
-      if (!hasReachedOffer(d)) return false;
-      if (WON_STAGES.has(d.properties.dealstage)) return wonDate(d) >= periodStart;
-      return new Date(d.properties.hs_lastmodifieddate) >= periodStart;
-    });
-    const offersSentPrev = deals2026.filter((d: any) => {
-      if (!hasReachedOffer(d)) return false;
-      if (WON_STAGES.has(d.properties.dealstage)) {
-        const d_ = wonDate(d);
-        return d_ >= prevPeriodStart && d_ <= prevPeriodEnd;
-      }
-      const lastMod = new Date(d.properties.hs_lastmodifieddate);
-      return lastMod >= prevPeriodStart && lastMod <= prevPeriodEnd;
-    });
-
-    // --- Funnel — mirrors the KPI cards exactly ---
-    // Uses the same data sources as the KPI row so numbers are always consistent:
-    //   Leads           → HubSpot contacts created in period
-    //   Møte booket     → meetingsThisPeriod  (calendar meetings CREATED in period)
-    //   Møte gjennomf.  → meetingsHeldPeriod  (calendar meetings that have HAPPENED)
-    //   Tilbud sendt    → offersSentPeriod    (deals that reached offer stage)
-    //   Vunnet          → wonThisPeriod       (won deals)
-    const periodContacts = range === "year" ? contacts : contacts.filter(
-      (c: any) => new Date(c.properties.createdate) >= periodStart
-    );
-    const totalLeads  = periodContacts.length;
-    const funnelBooked = meetingsThisPeriod.length;
-    const funnelHeld   = meetingsHeldPeriod.length;
-    const funnelOffer  = offersSentPeriod.length;
-    const funnelWon    = wonThisPeriod.length;
+    const leadsThisPeriod = dealsCreatedInPeriod(filteredDeals, periodStart, now);
 
     const funnelStages = [
       {
-        name: "Leads",
-        subtitle: "Nye HubSpot-kontakter opprettet i perioden",
-        value: totalLeads,
-        conversionRate: totalLeads > 0 ? Math.round((funnelBooked / totalLeads) * 1000) / 10 : 0,
+        name: "Nye deals",
+        subtitle: "Deals opprettet i perioden",
+        value: leadsThisPeriod.length,
+        conversionRate: leadsThisPeriod.length
+          ? Math.round((meetingsThisPeriod.length / leadsThisPeriod.length) * 1000) / 10
+          : 0,
       },
       {
         name: "Møte booket",
-        value: funnelBooked,
-        conversionRate: funnelBooked > 0 ? Math.round((funnelHeld / funnelBooked) * 1000) / 10 : 0,
+        value: meetingsThisPeriod.length,
+        conversionRate: meetingsThisPeriod.length
+          ? Math.round((meetingsHeldPeriod.length / meetingsThisPeriod.length) * 1000) / 10
+          : 0,
       },
       {
         name: "Møte gjennomført",
-        value: funnelHeld,
-        conversionRate: funnelHeld > 0 ? Math.round((funnelOffer / funnelHeld) * 1000) / 10 : 0,
+        value: meetingsHeldPeriod.length,
+        conversionRate: meetingsHeldPeriod.length
+          ? Math.round((offersSentPeriod.length / meetingsHeldPeriod.length) * 1000) / 10
+          : 0,
       },
       {
         name: "Tilbud sendt",
-        value: funnelOffer,
-        conversionRate: funnelOffer > 0 ? Math.round((funnelWon / funnelOffer) * 1000) / 10 : 0,
+        value: offersSentPeriod.length,
+        conversionRate: offersSentPeriod.length
+          ? Math.round((wonThisPeriod.length / offersSentPeriod.length) * 1000) / 10
+          : 0,
       },
-      {
-        name: "Vunnet",
-        value: funnelWon,
-      },
+      { name: "Vunnet", value: wonThisPeriod.length },
     ];
 
+    const { label: periodLabel, comparison: comparisonLabel } = periodText(
+      range,
+      year,
+    );
     const dashboardData: DashboardData = {
       primaryKPIs: {
         mrr: {
-          label: "MRR",
+          label: `MRR (vunnet i ${year})`,
           value: `${totalMRR.toLocaleString("no-NO")} kr`,
           trend: mrrTrend,
-          trendLabel: vsLabel,
+          trendLabel: `ny MRR ${comparisonLabel}`,
         },
         arr: {
           label: "Potensiell ARR",
           value: `${totalARR.toLocaleString("no-NO")} kr`,
           trend: mrrTrend,
-          trendLabel: vsLabel,
+          trendLabel: `ny MRR ${comparisonLabel}`,
         },
         minArr: {
           label: "Minimum ARR",
           value: `${totalMinARR.toLocaleString("no-NO")} kr`,
           trend: mrrTrend,
-          trendLabel: vsLabel,
+          trendLabel: `ny MRR ${comparisonLabel}`,
         },
         totalCustomers: {
           label: `Kunder vunnet (${periodLabel})`,
-          value: customersThisPeriod.toString(),
-          trend: percentChange(customersThisPeriod, wonPrevPeriod.length),
-          trendLabel: vsLabel,
+          value: wonThisPeriod.length.toString(),
+          trend: percentChange(wonThisPeriod.length, wonPrevPeriod.length),
+          trendLabel: comparisonLabel,
         },
         closingRate: {
-          label: `Closing Rate (${periodLabel})`,
+          label: `Closing rate (${periodLabel})`,
           value: `${closingRate}%`,
           trend: closingRate - prevClosingRate,
-          trendLabel: vsLabel,
+          trendLabel: comparisonLabel,
         },
       },
       meetingActivity: {
@@ -603,19 +552,19 @@ const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly
           label: `Møte booket (${periodLabel})`,
           value: meetingsThisPeriod.length.toString(),
           trend: percentChange(meetingsThisPeriod.length, meetingsPrevPeriod.length),
-          trendLabel: vsLabel,
+          trendLabel: comparisonLabel,
         },
         monthly: {
           label: `Møte gjennomført (${periodLabel})`,
           value: meetingsHeldPeriod.length.toString(),
           trend: percentChange(meetingsHeldPeriod.length, meetingsHeldPrev.length),
-          trendLabel: vsLabel,
+          trendLabel: comparisonLabel,
         },
         yearly: {
           label: `Tilbud sendt (${periodLabel})`,
           value: offersSentPeriod.length.toString(),
           trend: percentChange(offersSentPeriod.length, offersSentPrev.length),
-          trendLabel: vsLabel,
+          trendLabel: comparisonLabel,
         },
       },
       mrrOverTime,
@@ -626,32 +575,33 @@ const totalMRR = Math.round(wonDeals.reduce((s: number, d: any) => s + toMonthly
       funnelStages,
       churnAndRetention: {
         churnRate: {
-          label: `Churn Rate (${periodLabel})`,
-          value: `${churnRate}%`,
-          trend: -(churnRate - prevChurnRate),
-          trendLabel: churnRate <= prevChurnRate ? "improvement" : "increase",
+          label: `Andel tapte deals (${periodLabel})`,
+          value: decisionsThisPeriod
+            ? `${Math.round((lostThisPeriod.length / decisionsThisPeriod) * 100)}%`
+            : "0%",
+          trend: 0,
+          trendLabel: comparisonLabel,
         },
         customersLost: {
-          label: `Tapte kunder (${periodLabel})`,
-          value: lostInPeriod.toString(),
-          trend: -(lostInPeriod - lostInPrevPeriod),
-          trendLabel: vsLabel,
+          label: `Tapte deals (${periodLabel})`,
+          value: lostThisPeriod.length.toString(),
+          trend: -(lostThisPeriod.length - lostPrevPeriod.length),
+          trendLabel: comparisonLabel,
+          prefix: "",
         },
         retention3Month: {
-          label: "3-Month Retention",
-          value: `${retention}%`,
+          label: "3-måneders retention",
+          value: "Ikke tilgjengelig",
           trend: 0,
-          trendLabel: "last 3 months",
+          trendLabel: "krever abonnementsdata",
         },
       },
     };
 
     return NextResponse.json(dashboardData);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Dashboard API error:", error);
-    return NextResponse.json(
-      { error: error.message || "Failed to fetch dashboard data" },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : "Ukjent feil";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
