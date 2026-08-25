@@ -8,10 +8,13 @@ import {
 } from "@/lib/hubspot";
 import {
   AI_OS_PATTERN,
-  BOOKED_OR_LATER_STAGES,
-  HELD_OR_LATER_STAGES,
+  DISQUALIFIED_STAGES,
   LOST_STAGES,
-  OFFER_OR_LATER_STAGES,
+  MEETING_BOOKED_STAGES,
+  MEETING_HELD_STAGES,
+  OFFER_SENT_STAGES,
+  SALES_PIPELINE_ID,
+  TRIAL_STAGES,
   WON_STAGES,
 } from "@/lib/dashboardConfig";
 import type { DashboardData } from "@/lib/mockData";
@@ -177,6 +180,48 @@ function activitiesInPeriod(
   return activities;
 }
 
+function currentStageActivitiesInPeriod(
+  deals: HubSpotDeal[],
+  stages: ReadonlySet<string>,
+  start: Date,
+  end: Date,
+): DealActivity[] {
+  return deals.flatMap((deal) => {
+    const currentStage = deal.properties.dealstage;
+    if (!currentStage || !stages.has(currentStage)) return [];
+    const event = historyFor(deal)
+      .filter((entry) => entry.value === currentStage)
+      .at(-1);
+    if (!event) return [];
+    const date = new Date(event.timestamp);
+    return date >= start && date <= end ? [{ deal, date }] : [];
+  });
+}
+
+function trialConversionForCohort(
+  deals: HubSpotDeal[],
+  start: Date,
+  end: Date,
+): { rate: number; resolved: number; won: number } {
+  const cohort = activitiesInPeriod(deals, TRIAL_STAGES, start, end);
+  const resolved = cohort.filter(({ deal }) => {
+    const stage = deal.properties.dealstage ?? "";
+    return (
+      WON_STAGES.has(stage) ||
+      LOST_STAGES.has(stage) ||
+      DISQUALIFIED_STAGES.has(stage)
+    );
+  });
+  const won = resolved.filter(({ deal }) =>
+    WON_STAGES.has(deal.properties.dealstage ?? ""),
+  ).length;
+  return {
+    rate: resolved.length ? Math.round((won / resolved.length) * 100) : 0,
+    resolved: resolved.length,
+    won,
+  };
+}
+
 function dealsCreatedInPeriod(
   deals: HubSpotDeal[],
   start: Date,
@@ -255,11 +300,17 @@ export async function GET(request: NextRequest) {
     const yearStart = osloMidnight(year, 1, 1);
     const { deals, dealMRR } = await getCachedDashboardData();
 
-    // The product filter now applies consistently to all deal-based metrics.
+    // Every sales metric is scoped to the actual M51 sales pipeline. "Alle"
+    // means all products in that pipeline, not Customer Success/partner deals.
+    const salesDeals = deals.filter(
+      (deal) => deal.properties.pipeline === SALES_PIPELINE_ID,
+    );
     const filteredDeals =
       dealFilter === "ai-os"
-        ? deals.filter((deal) => AI_OS_PATTERN.test(deal.properties.dealname ?? ""))
-        : deals;
+        ? salesDeals.filter((deal) =>
+            AI_OS_PATTERN.test(deal.properties.dealname ?? ""),
+          )
+        : salesDeals;
 
     const currentYearDeals = filteredDeals.filter((deal) => {
       const created = deal.properties.createdate
@@ -271,25 +322,25 @@ export async function GET(request: NextRequest) {
       return (created && created >= yearStart) || (closed && closed >= yearStart);
     });
 
-    const wonThisPeriod = activitiesInPeriod(
+    const wonThisPeriod = currentStageActivitiesInPeriod(
       filteredDeals,
       WON_STAGES,
       periodStart,
       now,
     );
-    const wonPrevPeriod = activitiesInPeriod(
+    const wonPrevPeriod = currentStageActivitiesInPeriod(
       filteredDeals,
       WON_STAGES,
       prevPeriodStart,
       prevPeriodEnd,
     );
-    const lostThisPeriod = activitiesInPeriod(
+    const lostThisPeriod = currentStageActivitiesInPeriod(
       filteredDeals,
       LOST_STAGES,
       periodStart,
       now,
     );
-    const lostPrevPeriod = activitiesInPeriod(
+    const lostPrevPeriod = currentStageActivitiesInPeriod(
       filteredDeals,
       LOST_STAGES,
       prevPeriodStart,
@@ -297,37 +348,62 @@ export async function GET(request: NextRequest) {
     );
     const meetingsThisPeriod = activitiesInPeriod(
       filteredDeals,
-      BOOKED_OR_LATER_STAGES,
+      MEETING_BOOKED_STAGES,
       periodStart,
       now,
     );
     const meetingsPrevPeriod = activitiesInPeriod(
       filteredDeals,
-      BOOKED_OR_LATER_STAGES,
+      MEETING_BOOKED_STAGES,
       prevPeriodStart,
       prevPeriodEnd,
     );
     const meetingsHeldPeriod = activitiesInPeriod(
       filteredDeals,
-      HELD_OR_LATER_STAGES,
+      MEETING_HELD_STAGES,
       periodStart,
       now,
     );
     const meetingsHeldPrev = activitiesInPeriod(
       filteredDeals,
-      HELD_OR_LATER_STAGES,
+      MEETING_HELD_STAGES,
       prevPeriodStart,
       prevPeriodEnd,
     );
     const offersSentPeriod = activitiesInPeriod(
       filteredDeals,
-      OFFER_OR_LATER_STAGES,
+      OFFER_SENT_STAGES,
       periodStart,
       now,
     );
     const offersSentPrev = activitiesInPeriod(
       filteredDeals,
-      OFFER_OR_LATER_STAGES,
+      OFFER_SENT_STAGES,
+      prevPeriodStart,
+      prevPeriodEnd,
+    );
+    const trialsThisPeriod = activitiesInPeriod(
+      filteredDeals,
+      TRIAL_STAGES,
+      periodStart,
+      now,
+    );
+    const trialsPrevPeriod = activitiesInPeriod(
+      filteredDeals,
+      TRIAL_STAGES,
+      prevPeriodStart,
+      prevPeriodEnd,
+    );
+    const activeTrials = filteredDeals.filter((deal) =>
+      TRIAL_STAGES.has(deal.properties.dealstage ?? ""),
+    );
+    const trialConversion = trialConversionForCohort(
+      filteredDeals,
+      periodStart,
+      now,
+    );
+    const prevTrialConversion = trialConversionForCohort(
+      filteredDeals,
       prevPeriodStart,
       prevPeriodEnd,
     );
@@ -385,7 +461,7 @@ export async function GET(request: NextRequest) {
     for (let month = 1; month <= osloParts(now).month; month += 1) {
       const monthStart = osloMidnight(year, month, 1);
       const monthEnd = new Date(osloMidnight(year, month + 1, 1).getTime() - 1);
-      const wonInMonth = activitiesInPeriod(
+      const wonInMonth = currentStageActivitiesInPeriod(
         filteredDeals,
         WON_STAGES,
         monthStart,
@@ -477,35 +553,30 @@ export async function GET(request: NextRequest) {
 
     const leadsThisPeriod = dealsCreatedInPeriod(filteredDeals, periodStart, now);
 
+    // These are independent, documented stage events in the selected period.
+    // They intentionally have no between-stage conversion percentages because
+    // self-serve trials and manually skipped stages are parallel paths.
     const funnelStages = [
       {
         name: "Nye deals",
         subtitle: "Deals opprettet i perioden",
         value: leadsThisPeriod.length,
-        conversionRate: leadsThisPeriod.length
-          ? Math.round((meetingsThisPeriod.length / leadsThisPeriod.length) * 1000) / 10
-          : 0,
       },
       {
         name: "Møte booket",
         value: meetingsThisPeriod.length,
-        conversionRate: meetingsThisPeriod.length
-          ? Math.round((meetingsHeldPeriod.length / meetingsThisPeriod.length) * 1000) / 10
-          : 0,
       },
       {
         name: "Møte gjennomført",
         value: meetingsHeldPeriod.length,
-        conversionRate: meetingsHeldPeriod.length
-          ? Math.round((offersSentPeriod.length / meetingsHeldPeriod.length) * 1000) / 10
-          : 0,
+      },
+      {
+        name: "Gratis prøveperiode startet",
+        value: trialsThisPeriod.length,
       },
       {
         name: "Tilbud sendt",
         value: offersSentPeriod.length,
-        conversionRate: offersSentPeriod.length
-          ? Math.round((wonThisPeriod.length / offersSentPeriod.length) * 1000) / 10
-          : 0,
       },
       { name: "Vunnet", value: wonThisPeriod.length },
     ];
@@ -517,19 +588,19 @@ export async function GET(request: NextRequest) {
     const dashboardData: DashboardData = {
       primaryKPIs: {
         mrr: {
-          label: `MRR (vunnet i ${year})`,
+          label: `Ny MRR vunnet i ${year}`,
           value: `${totalMRR.toLocaleString("no-NO")} kr`,
           trend: mrrTrend,
           trendLabel: `ny MRR ${comparisonLabel}`,
         },
         arr: {
-          label: "Potensiell ARR",
+          label: "Annualisert verdi (MRR × 12)",
           value: `${totalARR.toLocaleString("no-NO")} kr`,
           trend: mrrTrend,
           trendLabel: `ny MRR ${comparisonLabel}`,
         },
         minArr: {
-          label: "Minimum ARR",
+          label: "Minimumsverdi (MRR × 3 mnd.)",
           value: `${totalMinARR.toLocaleString("no-NO")} kr`,
           trend: mrrTrend,
           trendLabel: `ny MRR ${comparisonLabel}`,
@@ -545,6 +616,18 @@ export async function GET(request: NextRequest) {
           value: `${closingRate}%`,
           trend: closingRate - prevClosingRate,
           trendLabel: comparisonLabel,
+        },
+        activeTrials: {
+          label: "Aktive prøveperioder (nå)",
+          value: activeTrials.length.toString(),
+          trend: percentChange(trialsThisPeriod.length, trialsPrevPeriod.length),
+          trendLabel: `${trialsThisPeriod.length} startet ${periodLabel} · ${comparisonLabel}`,
+        },
+        trialConversion: {
+          label: `Trial → vunnet (${periodLabel})`,
+          value: `${trialConversion.rate}%`,
+          trend: trialConversion.rate - prevTrialConversion.rate,
+          trendLabel: `${trialConversion.won} av ${trialConversion.resolved} avgjorte trials`,
         },
       },
       meetingActivity: {
@@ -585,7 +668,7 @@ export async function GET(request: NextRequest) {
         customersLost: {
           label: `Tapte deals (${periodLabel})`,
           value: lostThisPeriod.length.toString(),
-          trend: -(lostThisPeriod.length - lostPrevPeriod.length),
+          trend: -percentChange(lostThisPeriod.length, lostPrevPeriod.length),
           trendLabel: comparisonLabel,
           prefix: "",
         },

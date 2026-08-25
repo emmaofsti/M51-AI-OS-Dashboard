@@ -70,8 +70,9 @@ interface LineItemRecord {
   properties: {
     name?: string;
     amount?: string;
+    hs_mrr?: string;
+    hs_arr?: string;
     recurringbillingfrequency?: string;
-    hs_recurring_billing_period?: string;
   };
 }
 
@@ -214,8 +215,9 @@ async function fetchLineItemMRR(
           properties: [
             "name",
             "amount",
+            "hs_mrr",
+            "hs_arr",
             "recurringbillingfrequency",
-            "hs_recurring_billing_period",
           ],
         }),
       },
@@ -225,13 +227,19 @@ async function fetchLineItemMRR(
       const dealId = lineItemToDeal.get(String(lineItem.id));
       if (!dealId) continue;
       const amount = Number.parseFloat(lineItem.properties.amount ?? "") || 0;
+      const hubspotMRR =
+        Number.parseFloat(lineItem.properties.hs_mrr ?? "") || 0;
+      const hubspotARR =
+        Number.parseFloat(lineItem.properties.hs_arr ?? "") || 0;
       const frequency = (
-        lineItem.properties.recurringbillingfrequency ??
-        lineItem.properties.hs_recurring_billing_period ??
-        ""
+        lineItem.properties.recurringbillingfrequency ?? ""
       ).toLowerCase();
       const monthlyAmount =
-        frequency === "monthly" || frequency === "p1m"
+        hubspotMRR > 0
+          ? hubspotMRR
+          : hubspotARR > 0
+            ? hubspotARR / 12
+            : frequency === "monthly" || frequency === "p1m"
           ? amount
           : frequency === "annually" || frequency === "yearly" || frequency === "p1y"
             ? amount / 12

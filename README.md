@@ -5,17 +5,19 @@ Tailwind CSS og Recharts. Dashboardet leser live CRM-data fra HubSpot.
 
 ## Dette vises
 
-- MRR, ARR og minimumsverdi
+- Ny MRR, annualisert verdi og minimumsverdi
 - Vunne og tapte deals
 - Closing rate
 - Bookede og gjennomførte møter
 - Sendte tilbud
+- Aktive 14-dagers prøveperioder og trial-til-vunnet-konvertering
 - Møteaktivitet per periode og eier
 - Kilde til møtebooking
-- Salgstrakt
+- Registrerte salgssteg i perioden
 
-Aktivitets-KPI-ene beregnes fra HubSpots faktiske deal-steghistorikk. Et senere
-steg, som gratis prøveperiode, regnes som at tidligere steg i trakten er nådd.
+Aktivitets-KPI-ene beregnes fra HubSpots faktiske deal-steghistorikk i «Salg»-pipen.
+En prøveperiode teller bare som møte hvis dealen faktisk har vært i
+«Møte booket». Trial, vunnet og MRR rapporteres separat.
 
 ## Lokal kjøring
 

@@ -105,7 +105,7 @@ export default function DashboardPage() {
         {data && (
           <>
 
-        {/* Row 1 — MRR / Potensiell ARR / Minimum ARR / Kunder vunnet / Tapte kunder */}
+        {/* Row 1 — revenue / won / lost */}
         <section className="mt-6">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {loading ? (
@@ -124,12 +124,14 @@ export default function DashboardPage() {
 
         {/* Row 2 — Salgsaktivitet */}
         <section className="mt-6">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             {loading ? (
-              Array(4).fill(null).map((_, i) => <KPISkeleton key={i} />)
+              Array(6).fill(null).map((_, i) => <KPISkeleton key={i} />)
             ) : (
               <>
                 <KPICard data={data.primaryKPIs.closingRate} />
+                <KPICard data={data.primaryKPIs.activeTrials} />
+                <KPICard data={data.primaryKPIs.trialConversion} />
                 <KPICard data={data.meetingActivity.weekly} />
                 <KPICard data={data.meetingActivity.monthly} />
                 <KPICard data={data.meetingActivity.yearly} />
@@ -202,7 +204,7 @@ export default function DashboardPage() {
               items={data.meetingsBySource}
               total={loading ? 0 : data.meetingsBySource.reduce((s, i) => s + i.value, 0)}
             />
-            <FunnelCard title="Salgstrakt" stages={data.funnelStages} />
+            <FunnelCard title="Registrerte salgssteg i perioden" stages={data.funnelStages} />
           </div>
         </section>
 

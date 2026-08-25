@@ -15,20 +15,24 @@ deployes automatisk til Vercel fra GitHub-repoet `emmaofsti/M51-AI-OS-Dashboard`
 ## Dataprinsipper
 
 - Dashboardet viser aldri mocktall hvis HubSpot feiler.
+- Alle salgs-KPI-er er avgrenset til HubSpot-pipelinen `Salg` (`469391`).
 - Alle aktivitets-KPI-er bruker `dealstage` med `propertiesWithHistory`.
-- En deal teller som å ha nådd tidligere trinn når den går direkte til et
-  senere trinn. Eksempel: gratis prøveperiode teller som både booket og
-  gjennomført møte.
+- Hvert steg må være eksplisitt dokumentert i historikken. En selvbetjent
+  prøveperiode teller ikke som møte; en trial som tidligere har vært i
+  «Møte booket» beholder det dokumenterte møtet.
 - Hver deal telles maksimalt én gang per KPI og valgt periode.
 - `createdate` brukes bare for «Nye deals», ikke som proxy for stegovergang.
 - Closing rate er `vunnet / (vunnet + tapt)` basert på steghistorikk.
+- `Unqualified lead` er ikke en tapt deal og inngår ikke i closing rate.
+- Bare deals som fortsatt står i `Vunnet` teller som vunnet og MRR.
 - Både dato- og AI OS-filteret gjelder hele dashboardet.
 - Kalendergrenser beregnes i `Europe/Oslo`, inkludert sommertid.
 
 ## MRR
 
-- Månedlige line items: hele `amount`.
-- Årlige line items: `amount / 12`.
+- HubSpots `hs_mrr` brukes først, deretter `hs_arr / 12`.
+- Månedlige line items uten HubSpot-MRR: hele `amount`.
+- Årlige line items uten HubSpot-MRR: `amount / 12`.
 - Engangs-line items: 0 i MRR.
 - Eldre AI-line items uten frekvens: `amount` som dokumentert fallback.
 - AI-deals uten line items: pilotbeløp er månedlig, annet dealbeløp deles på 12.
@@ -37,9 +41,9 @@ deployes automatisk til Vercel fra GitHub-repoet `emmaofsti/M51-AI-OS-Dashboard`
 ## AI OS-filter
 
 Definert i `lib/dashboardConfig.ts`. Det dekker historiske AI OS-/pilotnavn og
-nyere navn som `M51 AI`, `m51.ai`, gratis prøveperiode og produktnivåene Pro,
-Starter, Enterprise og Agency. Det gamle generelle treffet på ordet `x` er
-fjernet fordi det inkluderte uvedkommende deals.
+nyere navn som `M51 AI`, `m51.ai`, gratis prøveperiode og webinar-demo. Det
+gamle generelle treffet på ordet `x` er fjernet fordi det inkluderte
+uvedkommende deals.
 
 ## Eiernavn
 
@@ -48,10 +52,11 @@ HubSpot-tokenet mangler owner-read-scope. Manuell mapping ligger i
 
 ```text
 26813296  Asgeir
+21194825  Daniel
 21417175  Eirik
 222734413 Elisabeth
 111394562 Mathias
-78966808  Daniel
+78966808  Sebastian
 224568206 Emma
 97198504  Hedda
 ```

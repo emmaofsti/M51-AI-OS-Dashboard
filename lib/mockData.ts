@@ -40,6 +40,8 @@ export interface DashboardData {
     minArr: KPIData;
     totalCustomers: KPIData;
     closingRate: KPIData;
+    activeTrials: KPIData;
+    trialConversion: KPIData;
   };
   meetingActivity: {
     weekly: KPIData;
