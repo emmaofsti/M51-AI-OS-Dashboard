@@ -2,7 +2,10 @@ import { AI_OS_PATTERN, WON_STAGES } from "@/lib/dashboardConfig";
 
 const HUBSPOT_TOKEN = process.env.HUBSPOT_ACCESS_TOKEN;
 const BASE_URL = "https://api.hubapi.com";
-const CACHE_TTL = 30 * 60 * 1000;
+// Keep HubSpot requests near-live without refetching the full deal history for
+// every browser request. The client polls on the same cadence and the manual
+// refresh button bypasses this cache entirely.
+const CACHE_TTL = 60 * 1000;
 
 const DEAL_PROPERTIES = [
   "dealname",
@@ -79,6 +82,7 @@ interface LineItemRecord {
 export interface DashboardSourceData {
   deals: HubSpotDeal[];
   dealMRR: Map<string, number>;
+  fetchedAt: string;
 }
 
 let cache: { data: DashboardSourceData; timestamp: number } | null = null;
@@ -278,7 +282,7 @@ async function fetchAllData(): Promise<DashboardSourceData> {
     );
   }
 
-  return { deals, dealMRR };
+  return { deals, dealMRR, fetchedAt: new Date().toISOString() };
 }
 
 export async function getCachedDashboardData(): Promise<DashboardSourceData> {

@@ -28,8 +28,12 @@ export default function DashboardPage() {
   const [dealFilter, setDealFilter] = useState<"all" | "ai-os">("ai-os");
   const [showLeaderboard, setShowLeaderboard] = useState(false);
 
-  const fetchData = useCallback(async (signal?: AbortSignal, forceRefresh = false) => {
-    setLoading(true);
+  const fetchData = useCallback(async (
+    signal?: AbortSignal,
+    forceRefresh = false,
+    background = false,
+  ) => {
+    if (!background) setLoading(true);
     setError(null);
     try {
       const url = `/api/dashboard-data?range=${dateRange}&dealFilter=${dealFilter}${forceRefresh ? "&refresh=true" : ""}`;
@@ -44,15 +48,30 @@ export default function DashboardPage() {
       setIsLive(false);
       setError("Kunne ikke hente HubSpot-data. Ingen erstatningstall vises.");
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, [dateRange, dealFilter]);
 
   useEffect(() => {
     const controller = new AbortController();
     fetchData(controller.signal);
-    return () => controller.abort();
+    const interval = window.setInterval(() => {
+      void fetchData(undefined, false, true);
+    }, 60_000);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+    };
   }, [fetchData]);
+
+  const lastUpdated = data?.lastUpdated
+    ? new Intl.DateTimeFormat("no-NO", {
+        timeZone: "Europe/Oslo",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }).format(new Date(data.lastUpdated))
+    : null;
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -82,6 +101,14 @@ export default function DashboardPage() {
               <span className="text-xs text-muted-foreground">
                 {isLive ? "Live HubSpot-data" : "HubSpot-data utilgjengelig"}
               </span>
+              {isLive && lastUpdated && (
+                <>
+                  <span className="text-xs text-muted-foreground/50">·</span>
+                  <span className="text-xs text-muted-foreground">
+                    Oppdatert kl. {lastUpdated}
+                  </span>
+                </>
+              )}
               <span className="text-xs text-muted-foreground/50">·</span>
               <span className="text-xs text-muted-foreground">
                 Data fra {new Date().getFullYear()}

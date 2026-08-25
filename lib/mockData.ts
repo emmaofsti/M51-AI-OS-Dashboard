@@ -34,6 +34,7 @@ export interface LeaderboardEntry {
 }
 
 export interface DashboardData {
+  lastUpdated: string;
   primaryKPIs: {
     mrr: KPIData;
     arr: KPIData;

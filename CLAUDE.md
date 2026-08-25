@@ -87,7 +87,9 @@ npm run lint
 npm run build
 ```
 
-HubSpot-cache er 30 minutter. `refresh=true` tømmer cachen.
+HubSpot-cache er 60 sekunder, og klienten oppdaterer automatisk hvert minutt.
+`refresh=true` tømmer cachen umiddelbart. API-et returnerer `lastUpdated`, som
+UI-et viser som tidspunktet for siste fullførte HubSpot-henting.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

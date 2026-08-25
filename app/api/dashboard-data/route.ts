@@ -298,7 +298,7 @@ export async function GET(request: NextRequest) {
     const { periodStart, prevPeriodStart, prevPeriodEnd, now, year } =
       getDateRange(range);
     const yearStart = osloMidnight(year, 1, 1);
-    const { deals, dealMRR } = await getCachedDashboardData();
+    const { deals, dealMRR, fetchedAt } = await getCachedDashboardData();
 
     // Every sales metric is scoped to the actual M51 sales pipeline. "Alle"
     // means all products in that pipeline, not Customer Success/partner deals.
@@ -586,6 +586,7 @@ export async function GET(request: NextRequest) {
       year,
     );
     const dashboardData: DashboardData = {
+      lastUpdated: fetchedAt,
       primaryKPIs: {
         mrr: {
           label: `Ny MRR vunnet i ${year}`,
