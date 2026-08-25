@@ -11,8 +11,6 @@ import {
 import {
   AI_OS_PATTERN,
   AI_OS_SERVICE,
-  CUSTOMER_SUCCESS_PIPELINE_ID,
-  CUSTOMER_SUCCESS_STAGES,
   DISQUALIFIED_STAGES,
   LOST_STAGES,
   MEETING_BOOKED_STAGES,
@@ -256,7 +254,7 @@ function trialConversionForCohort(
   deals: HubSpotDeal[],
   start: Date,
   end: Date,
-): { rate: number; resolved: number; won: number } {
+): { rate: number; resolved: number; won: number; bounced: number } {
   const cohort = activitiesInPeriod(deals, TRIAL_STAGES, start, end);
   const resolved = cohort.filter(({ deal }) => {
     const stage = deal.properties.dealstage ?? "";
@@ -273,6 +271,7 @@ function trialConversionForCohort(
     rate: resolved.length ? Math.round((won / resolved.length) * 100) : 0,
     resolved: resolved.length,
     won,
+    bounced: resolved.length - won,
   };
 }
 
@@ -359,7 +358,6 @@ export async function GET(request: NextRequest) {
     const dealFilter = request.nextUrl.searchParams.get("dealFilter") ?? "all";
     const { periodStart, prevPeriodStart, prevPeriodEnd, now, year } =
       getDateRange(range);
-    const yearStart = osloMidnight(year, 1, 1);
     const { deals, dealMRR, fetchedAt } = await getCachedDashboardData();
 
     // Every sales metric is scoped to the actual M51 sales pipeline. "Alle"
@@ -371,31 +369,13 @@ export async function GET(request: NextRequest) {
       dealFilter === "ai-os"
         ? salesDeals.filter(isAiOsDeal)
         : salesDeals;
-    const customerSuccessDeals = deals.filter(
-      (deal) => deal.properties.pipeline === CUSTOMER_SUCCESS_PIPELINE_ID,
-    );
-    const filteredCustomerSuccessDeals =
-      dealFilter === "ai-os"
-        ? customerSuccessDeals.filter(isAiOsDeal)
-        : customerSuccessDeals;
-
-    const currentYearDeals = filteredDeals.filter((deal) => {
-      const created = deal.properties.createdate
-        ? new Date(deal.properties.createdate)
-        : null;
-      const closed = deal.properties.closedate
-        ? new Date(deal.properties.closedate)
-        : null;
-      return (created && created >= yearStart) || (closed && closed >= yearStart);
-    });
-
-    const wonThisPeriod = currentStageActivitiesInPeriod(
+    const wonThisPeriod = activitiesInPeriod(
       filteredDeals,
       WON_STAGES,
       periodStart,
       now,
     );
-    const wonPrevPeriod = currentStageActivitiesInPeriod(
+    const wonPrevPeriod = activitiesInPeriod(
       filteredDeals,
       WON_STAGES,
       prevPeriodStart,
@@ -474,10 +454,13 @@ export async function GET(request: NextRequest) {
     const allWonDeals = filteredDeals.filter((deal) =>
       WON_STAGES.has(deal.properties.dealstage ?? ""),
     );
-    const customerSuccessStageCount = (stage: string) =>
-      filteredCustomerSuccessDeals.filter(
-        (deal) => deal.properties.dealstage === stage,
-      ).length;
+    const churnedCustomerDeals = filteredDeals.filter((deal) => {
+      const currentStage = deal.properties.dealstage ?? "";
+      return (
+        LOST_STAGES.has(currentStage) &&
+        historyFor(deal).some((entry) => WON_STAGES.has(entry.value))
+      );
+    });
     const trialConversion = trialConversionForCohort(
       filteredDeals,
       periodStart,
@@ -489,33 +472,35 @@ export async function GET(request: NextRequest) {
       prevPeriodEnd,
     );
 
-    const toMonthly = (deal: HubSpotDeal): number => {
+    const documentedMonthlyRevenue = (deal: HubSpotDeal): number => {
       const lineItemMRR = dealMRR.get(deal.id);
-      if (lineItemMRR !== undefined) return lineItemMRR;
-      const amount = Number.parseFloat(deal.properties.amount ?? "") || 0;
-      const dealName = deal.properties.dealname ?? "";
-      if (!AI_OS_PATTERN.test(dealName)) return 0;
-      return /pil{1,2}ot/i.test(dealName) ? amount : amount / 12;
+      if (lineItemMRR !== undefined && lineItemMRR > 0) return lineItemMRR;
+      return Number.parseFloat(deal.properties.hs_mrr ?? "") || 0;
     };
 
-    const currentWonDeals = currentYearDeals.filter((deal) =>
-      WON_STAGES.has(deal.properties.dealstage ?? ""),
+    const activeCustomerDeals = allWonDeals.filter(
+      (deal) => documentedMonthlyRevenue(deal) > 0,
     );
     const totalMRR = Math.round(
-      currentWonDeals.reduce((sum, deal) => sum + toMonthly(deal), 0),
+      activeCustomerDeals.reduce(
+        (sum, deal) => sum + documentedMonthlyRevenue(deal),
+        0,
+      ),
     );
     const totalARR = totalMRR * 12;
-    const totalMinARR = totalMRR * 3;
-    const newMRRThisPeriod = wonThisPeriod.reduce(
-      (sum, { deal }) => sum + toMonthly(deal),
-      0,
+    const potentialDeals = filteredDeals.filter((deal) => {
+      const stage = deal.properties.dealstage ?? "";
+      return TRIAL_STAGES.has(stage) || OFFER_SENT_STAGES.has(stage);
+    });
+    const valuedPotentialDeals = potentialDeals.filter(
+      (deal) => documentedMonthlyRevenue(deal) > 0,
     );
-    const newMRRPrevPeriod = wonPrevPeriod.reduce(
-      (sum, { deal }) => sum + toMonthly(deal),
-      0,
+    const potentialARR = Math.round(
+      valuedPotentialDeals.reduce(
+        (sum, deal) => sum + documentedMonthlyRevenue(deal) * 12,
+        0,
+      ),
     );
-    const mrrTrend = percentChange(newMRRThisPeriod, newMRRPrevPeriod);
-
     // Standard close rate: won decisions divided by all closed decisions.
     const decisionsThisPeriod = wonThisPeriod.length + lostThisPeriod.length;
     const decisionsPrevPeriod = wonPrevPeriod.length + lostPrevPeriod.length;
@@ -542,7 +527,7 @@ export async function GET(request: NextRequest) {
     for (let month = 1; month <= osloParts(now).month; month += 1) {
       const monthStart = osloMidnight(year, month, 1);
       const monthEnd = new Date(osloMidnight(year, month + 1, 1).getTime() - 1);
-      const wonInMonth = currentStageActivitiesInPeriod(
+      const wonInMonth = activitiesInPeriod(
         filteredDeals,
         WON_STAGES,
         monthStart,
@@ -554,7 +539,10 @@ export async function GET(request: NextRequest) {
           timeZone: OSLO_TIME_ZONE,
         }),
         value: Math.round(
-          wonInMonth.reduce((sum, { deal }) => sum + toMonthly(deal), 0),
+          wonInMonth.reduce(
+            (sum, { deal }) => sum + documentedMonthlyRevenue(deal),
+            0,
+          ),
         ),
       });
     }
@@ -670,28 +658,28 @@ export async function GET(request: NextRequest) {
       lastUpdated: fetchedAt,
       primaryKPIs: {
         mrr: {
-          label: `Ny MRR vunnet i ${year}`,
+          label: "MRR",
           value: `${totalMRR.toLocaleString("no-NO")} kr`,
-          trend: mrrTrend,
-          trendLabel: `ny MRR ${comparisonLabel}`,
+          trend: 0,
+          trendLabel: "aktive betalende kunder",
         },
         arr: {
-          label: "Annualisert verdi (MRR × 12)",
+          label: "ARR",
           value: `${totalARR.toLocaleString("no-NO")} kr`,
-          trend: mrrTrend,
-          trendLabel: `ny MRR ${comparisonLabel}`,
+          trend: 0,
+          trendLabel: "MRR × 12",
         },
-        minArr: {
-          label: "Minimumsverdi (MRR × 3 mnd.)",
-          value: `${totalMinARR.toLocaleString("no-NO")} kr`,
-          trend: mrrTrend,
-          trendLabel: `ny MRR ${comparisonLabel}`,
+        potentialArr: {
+          label: "Potensiell ny ARR",
+          value: `${potentialARR.toLocaleString("no-NO")} kr`,
+          trend: 0,
+          trendLabel: `${valuedPotentialDeals.length} av ${potentialDeals.length} trials/tilbud har dokumentert MRR`,
         },
-        totalCustomers: {
-          label: `Kunder vunnet (${periodLabel})`,
-          value: wonThisPeriod.length.toString(),
-          trend: percentChange(wonThisPeriod.length, wonPrevPeriod.length),
-          trendLabel: comparisonLabel,
+        customersChurned: {
+          label: "Kunder sluttet",
+          value: churnedCustomerDeals.length.toString(),
+          trend: 0,
+          trendLabel: "tidligere vunnet, nå tapt",
         },
         closingRate: {
           label: `Closing rate (${periodLabel})`,
@@ -710,6 +698,21 @@ export async function GET(request: NextRequest) {
           value: `${trialConversion.rate}%`,
           trend: trialConversion.rate - prevTrialConversion.rate,
           trendLabel: `${trialConversion.won} av ${trialConversion.resolved} avgjorte trials`,
+        },
+        trialBounce: {
+          label: `Trial bounce (${periodLabel})`,
+          value: trialConversion.resolved
+            ? `${Math.round((trialConversion.bounced / trialConversion.resolved) * 100)}%`
+            : "0%",
+          trend: prevTrialConversion.resolved
+            ? Math.round(
+                (trialConversion.bounced / Math.max(trialConversion.resolved, 1)) * 100,
+              ) -
+              Math.round(
+                (prevTrialConversion.bounced / prevTrialConversion.resolved) * 100,
+              )
+            : 0,
+          trendLabel: `${trialConversion.bounced} av ${trialConversion.resolved} avgjorte trials`,
         },
       },
       meetingActivity: {
@@ -741,6 +744,15 @@ export async function GET(request: NextRequest) {
       customerLifecycle: {
         salesStages: [
           {
+            key: "meeting",
+            name: "Møte booket",
+            subtitle: "Venter på møte eller neste steg",
+            value: filteredDeals.filter((deal) =>
+              MEETING_BOOKED_STAGES.has(deal.properties.dealstage ?? ""),
+            ).length,
+            tone: "blue",
+          },
+          {
             key: "trial",
             name: "Gratis prøveperiode",
             subtitle: "14 dager – ikke vunnet ennå",
@@ -748,77 +760,32 @@ export async function GET(request: NextRequest) {
             tone: "violet",
           },
           {
-            key: "won",
-            name: "Vunnet",
-            subtitle: "Vunne salgsdeals – ikke lik aktiv kunde",
-            value: allWonDeals.length,
-            tone: "green",
+            key: "offer",
+            name: "Tilbud sendt",
+            subtitle: "Åpne tilbud som ikke er avgjort",
+            value: filteredDeals.filter((deal) =>
+              OFFER_SENT_STAGES.has(deal.properties.dealstage ?? ""),
+            ).length,
+            tone: "amber",
           },
         ],
         customerSuccessStages: [
           {
-            key: "onboarding",
-            name: "Onboarding",
-            subtitle: "Klargjøres for oppstart",
-            value: customerSuccessStageCount(CUSTOMER_SUCCESS_STAGES.onboarding),
-            tone: "blue",
-          },
-          {
-            key: "pilot",
-            name: "Pilotperiode",
-            subtitle: "Pilot etter vunnet deal",
-            value: customerSuccessStageCount(CUSTOMER_SUCCESS_STAGES.pilot),
-            tone: "violet",
-          },
-          {
             key: "active",
             name: "Aktiv kunde",
-            subtitle: "Bekreftet aktiv i HubSpot",
-            value: customerSuccessStageCount(CUSTOMER_SUCCESS_STAGES.active),
+            subtitle: "Vunnet deal med dokumentert MRR",
+            value: activeCustomerDeals.length,
             tone: "teal",
           },
           {
-            key: "renewal",
-            name: "Fornyelse / oppsalg",
-            subtitle: "Til fornyelse eller vekst",
-            value: customerSuccessStageCount(CUSTOMER_SUCCESS_STAGES.renewal),
-            tone: "lime",
-          },
-          {
             key: "churned",
-            name: "Sagt opp",
-            subtitle: "Bekreftet avsluttet kundeforhold",
-            value: customerSuccessStageCount(CUSTOMER_SUCCESS_STAGES.churned),
+            name: "Kunder sluttet",
+            subtitle: "Tidligere vunnet deal som nå er tapt",
+            value: churnedCustomerDeals.length,
             tone: "red",
           },
         ],
-        trackingMessage:
-          filteredCustomerSuccessDeals.length === 0
-            ? "Ingen av de vunne dealene er registrert i Customer Success-pipelinen. Derfor kan HubSpot foreløpig ikke bekrefte hvor mange som er aktive eller har sagt opp."
-            : `${filteredCustomerSuccessDeals.length} av ${allWonDeals.length} vunne deals er registrert i Customer Success-pipelinen. Oppdater denne pipelinen for å få korrekt antall aktive kunder og oppsigelser.`,
-      },
-      churnAndRetention: {
-        churnRate: {
-          label: `Andel tapte deals (${periodLabel})`,
-          value: decisionsThisPeriod
-            ? `${Math.round((lostThisPeriod.length / decisionsThisPeriod) * 100)}%`
-            : "0%",
-          trend: 0,
-          trendLabel: comparisonLabel,
-        },
-        customersLost: {
-          label: `Tapte deals (${periodLabel})`,
-          value: lostThisPeriod.length.toString(),
-          trend: -percentChange(lostThisPeriod.length, lostPrevPeriod.length),
-          trendLabel: comparisonLabel,
-          prefix: "",
-        },
-        retention3Month: {
-          label: "3-måneders retention",
-          value: "Ikke tilgjengelig",
-          trend: 0,
-          trendLabel: "krever abonnementsdata",
-        },
+        trackingMessage: `${allWonDeals.length - activeCustomerDeals.length} vunne deals mangler dokumentert MRR og er derfor ikke tatt med som aktive kunder. «Kunder sluttet» teller bare deals som først var vunnet og senere ble flyttet til tapt.`,
       },
     };
 

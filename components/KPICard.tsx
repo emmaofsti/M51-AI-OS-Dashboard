@@ -13,7 +13,8 @@ export function KPICard({ data }: KPICardProps) {
   // For churn-related metrics, a negative trend is actually good
   const isChurnMetric =
     data.label.toLowerCase().includes("churn") ||
-    data.label.toLowerCase().includes("lost");
+    data.label.toLowerCase().includes("lost") ||
+    data.label.toLowerCase().includes("bounce");
   const isGood = isChurnMetric ? data.trend < 0 : isPositiveTrend;
 
   const trendDisplay = data.prefix

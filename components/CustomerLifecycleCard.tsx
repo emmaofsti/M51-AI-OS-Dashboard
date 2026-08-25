@@ -30,6 +30,8 @@ const toneStyles: Record<CustomerStageData["tone"], string> = {
 
 const icons = {
   trial: FlaskConical,
+  meeting: UsersRound,
+  offer: CircleDollarSign,
   won: BadgeCheck,
   onboarding: Rocket,
   pilot: UsersRound,
@@ -71,10 +73,10 @@ export function CustomerLifecycleCard({
           <div>
             <div className="flex items-center gap-2">
               <UsersRound className="h-5 w-5 text-[#BDED62]" aria-hidden="true" />
-              <h2 className="text-lg font-semibold">Kunder per HubSpot-steg</h2>
+              <h2 className="text-lg font-semibold">Status i kundereisen</h2>
             </div>
             <p className="mt-1 text-sm text-white/65">
-              Nåværende status, hentet direkte fra dealene i HubSpot
+              Nåværende salgs- og kundestatus, hentet direkte fra HubSpot
             </p>
           </div>
           <span className="w-fit rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white/80 ring-1 ring-white/15">
@@ -84,13 +86,13 @@ export function CustomerLifecycleCard({
       </CardHeader>
 
       <CardContent className="p-5 sm:p-6">
-        <div className="grid gap-6 xl:grid-cols-[0.72fr_1.8fr]">
+        <div className="grid gap-6 xl:grid-cols-[1.4fr_0.8fr]">
           <div>
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-semibold">Salg</h3>
               <span className="text-xs text-muted-foreground">Salgspipeline</span>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               {salesStages.map((stage) => (
                 <StageTile key={stage.key} stage={stage} />
               ))}
@@ -99,10 +101,10 @@ export function CustomerLifecycleCard({
 
           <div>
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Kundereise</h3>
-              <span className="text-xs text-muted-foreground">Customer Success</span>
+              <h3 className="text-sm font-semibold">Kunder</h3>
+              <span className="text-xs text-muted-foreground">Betalende og sluttet</span>
             </div>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <div className="grid grid-cols-2 gap-3">
               {customerSuccessStages.map((stage) => (
                 <StageTile key={stage.key} stage={stage} />
               ))}

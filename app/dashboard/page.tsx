@@ -125,13 +125,55 @@ export default function DashboardPage() {
         )}
 
         {!data && loading && (
-          <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            {Array(5).fill(null).map((_, i) => <KPISkeleton key={i} />)}
+          <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {Array(4).fill(null).map((_, i) => <KPISkeleton key={i} />)}
           </section>
         )}
 
         {data && (
           <>
+
+        {/* Row 1 — økonomi */}
+        <section className="mt-6">
+          <div className="mb-3">
+            <h2 className="text-base font-semibold">Økonomi</h2>
+            <p className="text-sm text-muted-foreground">Kun dokumenterte verdier fra HubSpot</p>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {loading ? (
+              Array(4).fill(null).map((_, i) => <KPISkeleton key={i} />)
+            ) : (
+              <>
+                <KPICard data={data.primaryKPIs.mrr} />
+                <KPICard data={data.primaryKPIs.arr} />
+                <KPICard data={data.primaryKPIs.potentialArr} />
+                <KPICard data={data.primaryKPIs.customersChurned} />
+              </>
+            )}
+          </div>
+        </section>
+
+        {/* Row 2 — salg og trial */}
+        <section className="mt-6">
+          <div className="mb-3">
+            <h2 className="text-base font-semibold">Salg og 14 dager gratis</h2>
+            <p className="text-sm text-muted-foreground">Møter, konvertering og frafall i prøveperioden</p>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            {loading ? (
+              Array(6).fill(null).map((_, i) => <KPISkeleton key={i} />)
+            ) : (
+              <>
+                <KPICard data={data.meetingActivity.weekly} />
+                <KPICard data={data.primaryKPIs.closingRate} />
+                <KPICard data={data.primaryKPIs.activeTrials} />
+                <KPICard data={data.primaryKPIs.trialConversion} />
+                <KPICard data={data.primaryKPIs.trialBounce} />
+                <KPICard data={data.meetingActivity.monthly} />
+              </>
+            )}
+          </div>
+        </section>
 
         <section className="mt-6">
           <CustomerLifecycleCard
@@ -139,41 +181,6 @@ export default function DashboardPage() {
             customerSuccessStages={data.customerLifecycle.customerSuccessStages}
             trackingMessage={data.customerLifecycle.trackingMessage}
           />
-        </section>
-
-        {/* Row 1 — revenue / won / lost */}
-        <section className="mt-6">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            {loading ? (
-              Array(5).fill(null).map((_, i) => <KPISkeleton key={i} />)
-            ) : (
-              <>
-                <KPICard data={data.primaryKPIs.mrr} />
-                <KPICard data={data.primaryKPIs.arr} />
-                <KPICard data={data.primaryKPIs.minArr} />
-                <KPICard data={data.primaryKPIs.totalCustomers} />
-                <KPICard data={data.churnAndRetention.customersLost} />
-              </>
-            )}
-          </div>
-        </section>
-
-        {/* Row 2 — Salgsaktivitet */}
-        <section className="mt-6">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-            {loading ? (
-              Array(6).fill(null).map((_, i) => <KPISkeleton key={i} />)
-            ) : (
-              <>
-                <KPICard data={data.primaryKPIs.closingRate} />
-                <KPICard data={data.primaryKPIs.activeTrials} />
-                <KPICard data={data.primaryKPIs.trialConversion} />
-                <KPICard data={data.meetingActivity.weekly} />
-                <KPICard data={data.meetingActivity.monthly} />
-                <KPICard data={data.meetingActivity.yearly} />
-              </>
-            )}
-          </div>
         </section>
 
         {/* Row 3 — Revenue + Meetings charts */}

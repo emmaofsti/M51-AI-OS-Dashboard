@@ -46,11 +46,12 @@ export interface DashboardData {
   primaryKPIs: {
     mrr: KPIData;
     arr: KPIData;
-    minArr: KPIData;
-    totalCustomers: KPIData;
+    potentialArr: KPIData;
+    customersChurned: KPIData;
     closingRate: KPIData;
     activeTrials: KPIData;
     trialConversion: KPIData;
+    trialBounce: KPIData;
   };
   meetingActivity: {
     weekly: KPIData;
@@ -67,10 +68,5 @@ export interface DashboardData {
     salesStages: CustomerStageData[];
     customerSuccessStages: CustomerStageData[];
     trackingMessage: string;
-  };
-  churnAndRetention: {
-    churnRate: KPIData;
-    customersLost: KPIData;
-    retention3Month: KPIData;
   };
 }

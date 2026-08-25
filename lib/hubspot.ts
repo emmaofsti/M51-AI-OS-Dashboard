@@ -1,4 +1,4 @@
-import { AI_OS_PATTERN, WON_STAGES } from "@/lib/dashboardConfig";
+import { OFFER_SENT_STAGES, TRIAL_STAGES, WON_STAGES } from "@/lib/dashboardConfig";
 
 const HUBSPOT_TOKEN = process.env.HUBSPOT_ACCESS_TOKEN;
 const BASE_URL = "https://api.hubapi.com";
@@ -17,6 +17,7 @@ const DEAL_PROPERTIES = [
   "hs_lastmodifieddate",
   "hubspot_owner_id",
   "tjenester",
+  "hs_mrr",
 ] as const;
 
 export interface HubSpotHistoryEntry {
@@ -37,6 +38,7 @@ export interface HubSpotDeal {
     hs_lastmodifieddate?: string;
     hubspot_owner_id?: string;
     tjenester?: string;
+    hs_mrr?: string;
   };
   propertiesWithHistory?: {
     dealstage?: HubSpotHistoryEntry[];
@@ -266,9 +268,7 @@ async function fetchLineItemMRR(
           ? amount
           : frequency === "annually" || frequency === "yearly" || frequency === "p1y"
             ? amount / 12
-            : !frequency && AI_OS_PATTERN.test(lineItem.properties.name ?? "")
-              ? amount
-              : 0;
+            : 0;
       dealMRR.set(dealId, (dealMRR.get(dealId) ?? 0) + monthlyAmount);
     }
   }
@@ -287,16 +287,23 @@ async function fetchAllData(): Promise<DashboardSourceData> {
   } while (after);
 
   const deals = await fetchDealHistories(searchedDeals);
-  const wonDealIds = deals
-    .filter((deal) => WON_STAGES.has(deal.properties.dealstage ?? ""))
+  const revenueDealIds = deals
+    .filter((deal) => {
+      const stage = deal.properties.dealstage ?? "";
+      return (
+        WON_STAGES.has(stage) ||
+        TRIAL_STAGES.has(stage) ||
+        OFFER_SENT_STAGES.has(stage)
+      );
+    })
     .map((deal) => deal.id);
 
   let dealMRR = new Map<string, number>();
   try {
-    dealMRR = await fetchLineItemMRR(wonDealIds);
+    dealMRR = await fetchLineItemMRR(revenueDealIds);
   } catch (error) {
     console.warn(
-      "Line items fetch failed; falling back to deal amount.",
+      "Line items fetch failed; using documented deal MRR only.",
       error,
     );
   }
