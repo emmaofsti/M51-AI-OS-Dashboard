@@ -10,6 +10,9 @@ import {
 } from "@/lib/hubspot";
 import {
   AI_OS_PATTERN,
+  AI_OS_SERVICE,
+  CUSTOMER_SUCCESS_PIPELINE_ID,
+  CUSTOMER_SUCCESS_STAGES,
   DISQUALIFIED_STAGES,
   LOST_STAGES,
   MEETING_BOOKED_STAGES,
@@ -340,6 +343,14 @@ function periodText(range: string, year: number) {
   return { label: "siste 30 dager", comparison: "mot forrige 30 dager" };
 }
 
+function isAiOsDeal(deal: HubSpotDeal): boolean {
+  const services = (deal.properties.tjenester ?? "").split(";");
+  return (
+    services.includes(AI_OS_SERVICE) ||
+    AI_OS_PATTERN.test(deal.properties.dealname ?? "")
+  );
+}
+
 export async function GET(request: NextRequest) {
   try {
     if (request.nextUrl.searchParams.get("refresh") === "true") clearCache();
@@ -358,10 +369,15 @@ export async function GET(request: NextRequest) {
     );
     const filteredDeals =
       dealFilter === "ai-os"
-        ? salesDeals.filter((deal) =>
-            AI_OS_PATTERN.test(deal.properties.dealname ?? ""),
-          )
+        ? salesDeals.filter(isAiOsDeal)
         : salesDeals;
+    const customerSuccessDeals = deals.filter(
+      (deal) => deal.properties.pipeline === CUSTOMER_SUCCESS_PIPELINE_ID,
+    );
+    const filteredCustomerSuccessDeals =
+      dealFilter === "ai-os"
+        ? customerSuccessDeals.filter(isAiOsDeal)
+        : customerSuccessDeals;
 
     const currentYearDeals = filteredDeals.filter((deal) => {
       const created = deal.properties.createdate
@@ -455,6 +471,13 @@ export async function GET(request: NextRequest) {
     const activeTrials = filteredDeals.filter((deal) =>
       TRIAL_STAGES.has(deal.properties.dealstage ?? ""),
     );
+    const allWonDeals = filteredDeals.filter((deal) =>
+      WON_STAGES.has(deal.properties.dealstage ?? ""),
+    );
+    const customerSuccessStageCount = (stage: string) =>
+      filteredCustomerSuccessDeals.filter(
+        (deal) => deal.properties.dealstage === stage,
+      ).length;
     const trialConversion = trialConversionForCohort(
       filteredDeals,
       periodStart,
@@ -715,6 +738,65 @@ export async function GET(request: NextRequest) {
       meetingsBookedTotal: meetingsThisPeriod.length,
       meetingsLeaderboard,
       funnelStages,
+      customerLifecycle: {
+        salesStages: [
+          {
+            key: "trial",
+            name: "Gratis prøveperiode",
+            subtitle: "14 dager – ikke vunnet ennå",
+            value: activeTrials.length,
+            tone: "violet",
+          },
+          {
+            key: "won",
+            name: "Vunnet",
+            subtitle: "Vunne salgsdeals – ikke lik aktiv kunde",
+            value: allWonDeals.length,
+            tone: "green",
+          },
+        ],
+        customerSuccessStages: [
+          {
+            key: "onboarding",
+            name: "Onboarding",
+            subtitle: "Klargjøres for oppstart",
+            value: customerSuccessStageCount(CUSTOMER_SUCCESS_STAGES.onboarding),
+            tone: "blue",
+          },
+          {
+            key: "pilot",
+            name: "Pilotperiode",
+            subtitle: "Pilot etter vunnet deal",
+            value: customerSuccessStageCount(CUSTOMER_SUCCESS_STAGES.pilot),
+            tone: "violet",
+          },
+          {
+            key: "active",
+            name: "Aktiv kunde",
+            subtitle: "Bekreftet aktiv i HubSpot",
+            value: customerSuccessStageCount(CUSTOMER_SUCCESS_STAGES.active),
+            tone: "teal",
+          },
+          {
+            key: "renewal",
+            name: "Fornyelse / oppsalg",
+            subtitle: "Til fornyelse eller vekst",
+            value: customerSuccessStageCount(CUSTOMER_SUCCESS_STAGES.renewal),
+            tone: "lime",
+          },
+          {
+            key: "churned",
+            name: "Sagt opp",
+            subtitle: "Bekreftet avsluttet kundeforhold",
+            value: customerSuccessStageCount(CUSTOMER_SUCCESS_STAGES.churned),
+            tone: "red",
+          },
+        ],
+        trackingMessage:
+          filteredCustomerSuccessDeals.length === 0
+            ? "Ingen av de vunne dealene er registrert i Customer Success-pipelinen. Derfor kan HubSpot foreløpig ikke bekrefte hvor mange som er aktive eller har sagt opp."
+            : `${filteredCustomerSuccessDeals.length} av ${allWonDeals.length} vunne deals er registrert i Customer Success-pipelinen. Oppdater denne pipelinen for å få korrekt antall aktive kunder og oppsigelser.`,
+      },
       churnAndRetention: {
         churnRate: {
           label: `Andel tapte deals (${periodLabel})`,

@@ -7,6 +7,7 @@ import { KPICard } from "@/components/KPICard";
 import { ChartCard } from "@/components/ChartCard";
 import { FunnelCard } from "@/components/FunnelCard";
 import { SourceCard } from "@/components/SourceCard";
+import { CustomerLifecycleCard } from "@/components/CustomerLifecycleCard";
 import type { DashboardData } from "@/lib/mockData";
 
 function KPISkeleton() {
@@ -131,6 +132,14 @@ export default function DashboardPage() {
 
         {data && (
           <>
+
+        <section className="mt-6">
+          <CustomerLifecycleCard
+            salesStages={data.customerLifecycle.salesStages}
+            customerSuccessStages={data.customerLifecycle.customerSuccessStages}
+            trackingMessage={data.customerLifecycle.trackingMessage}
+          />
+        </section>
 
         {/* Row 1 — revenue / won / lost */}
         <section className="mt-6">

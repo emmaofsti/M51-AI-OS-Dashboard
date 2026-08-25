@@ -33,6 +33,14 @@ export interface LeaderboardEntry {
   count: number;
 }
 
+export interface CustomerStageData {
+  key: string;
+  name: string;
+  subtitle: string;
+  value: number;
+  tone: "blue" | "violet" | "amber" | "teal" | "green" | "lime" | "red";
+}
+
 export interface DashboardData {
   lastUpdated: string;
   primaryKPIs: {
@@ -55,6 +63,11 @@ export interface DashboardData {
   meetingsBookedTotal: number;
   meetingsLeaderboard: LeaderboardEntry[];
   funnelStages: FunnelStage[];
+  customerLifecycle: {
+    salesStages: CustomerStageData[];
+    customerSuccessStages: CustomerStageData[];
+    trackingMessage: string;
+  };
   churnAndRetention: {
     churnRate: KPIData;
     customersLost: KPIData;

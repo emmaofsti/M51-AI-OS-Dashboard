@@ -16,6 +16,7 @@ const DEAL_PROPERTIES = [
   "pipeline",
   "hs_lastmodifieddate",
   "hubspot_owner_id",
+  "tjenester",
 ] as const;
 
 export interface HubSpotHistoryEntry {
@@ -35,6 +36,7 @@ export interface HubSpotDeal {
     pipeline?: string;
     hs_lastmodifieddate?: string;
     hubspot_owner_id?: string;
+    tjenester?: string;
   };
   propertiesWithHistory?: {
     dealstage?: HubSpotHistoryEntry[];

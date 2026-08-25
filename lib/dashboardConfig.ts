@@ -3,6 +3,8 @@
 // inflated counts.
 export const SALES_PIPELINE_ID = "469391";
 
+export const CUSTOMER_SUCCESS_PIPELINE_ID = "896751509";
+
 export const WON_STAGES = new Set(["1499916"]);
 
 export const LOST_STAGES = new Set(["1499917"]);
@@ -23,6 +25,16 @@ export const TRIAL_STAGES = new Set([
 ]);
 
 export const OFFER_SENT_STAGES = new Set(["1499915"]);
+
+export const CUSTOMER_SUCCESS_STAGES = {
+  onboarding: "1355011952",
+  pilot: "1355011954",
+  active: "1355011955",
+  renewal: "1355011956",
+  churned: "1355011957",
+} as const;
+
+export const AI_OS_SERVICE = "AI Agency OS";
 
 // Product naming has changed over time. Cover both "AI OS" and the newer
 // "M51 AI" / "m51.ai" naming without the old catch-all match on the word "x".
