@@ -232,24 +232,6 @@ function firstHeldMeetingActivities(
   });
 }
 
-function currentStageActivitiesInPeriod(
-  deals: HubSpotDeal[],
-  stages: ReadonlySet<string>,
-  start: Date,
-  end: Date,
-): DealActivity[] {
-  return deals.flatMap((deal) => {
-    const currentStage = deal.properties.dealstage;
-    if (!currentStage || !stages.has(currentStage)) return [];
-    const event = historyFor(deal)
-      .filter((entry) => entry.value === currentStage)
-      .at(-1);
-    if (!event) return [];
-    const date = new Date(event.timestamp);
-    return date >= start && date <= end ? [{ deal, date }] : [];
-  });
-}
-
 function trialConversionForCohort(
   deals: HubSpotDeal[],
   start: Date,
@@ -375,24 +357,6 @@ export async function GET(request: NextRequest) {
       periodStart,
       now,
     );
-    const wonPrevPeriod = activitiesInPeriod(
-      filteredDeals,
-      WON_STAGES,
-      prevPeriodStart,
-      prevPeriodEnd,
-    );
-    const lostThisPeriod = currentStageActivitiesInPeriod(
-      filteredDeals,
-      LOST_STAGES,
-      periodStart,
-      now,
-    );
-    const lostPrevPeriod = currentStageActivitiesInPeriod(
-      filteredDeals,
-      LOST_STAGES,
-      prevPeriodStart,
-      prevPeriodEnd,
-    );
     const meetingsThisPeriod = activitiesInPeriod(
       filteredDeals,
       MEETING_BOOKED_STAGES,
@@ -501,14 +465,21 @@ export async function GET(request: NextRequest) {
         0,
       ),
     );
-    // Standard close rate: won decisions divided by all closed decisions.
-    const decisionsThisPeriod = wonThisPeriod.length + lostThisPeriod.length;
-    const decisionsPrevPeriod = wonPrevPeriod.length + lostPrevPeriod.length;
-    const closingRate = decisionsThisPeriod
-      ? Math.round((wonThisPeriod.length / decisionsThisPeriod) * 100)
+    // Closing rate is cohort-based: among deals whose first documented meeting
+    // was held in the period, how many have since reached Won?
+    const wonFromHeldMeetings = meetingsHeldPeriod.filter(({ deal }) =>
+      historyFor(deal).some((entry) => WON_STAGES.has(entry.value)),
+    );
+    const wonFromHeldMeetingsPrev = meetingsHeldPrev.filter(({ deal }) =>
+      historyFor(deal).some((entry) => WON_STAGES.has(entry.value)),
+    );
+    const closingRate = meetingsHeldPeriod.length
+      ? Math.round((wonFromHeldMeetings.length / meetingsHeldPeriod.length) * 100)
       : 0;
-    const prevClosingRate = decisionsPrevPeriod
-      ? Math.round((wonPrevPeriod.length / decisionsPrevPeriod) * 100)
+    const prevClosingRate = meetingsHeldPrev.length
+      ? Math.round(
+          (wonFromHeldMeetingsPrev.length / meetingsHeldPrev.length) * 100,
+        )
       : 0;
 
     const ownerCounts = new Map<string, number>();
@@ -685,7 +656,7 @@ export async function GET(request: NextRequest) {
           label: `Closing rate (${periodLabel})`,
           value: `${closingRate}%`,
           trend: closingRate - prevClosingRate,
-          trendLabel: comparisonLabel,
+          trendLabel: `${wonFromHeldMeetings.length} av ${meetingsHeldPeriod.length} gjennomførte møter`,
         },
         activeTrials: {
           label: "Aktive prøveperioder (nå)",
