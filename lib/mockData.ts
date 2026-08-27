@@ -15,6 +15,8 @@ export interface ChartDataPoint {
   value: number;
 }
 
+// Kept for the reusable detail cards, although those cards are no longer part
+// of the primary dashboard surface.
 export interface FunnelStage {
   name: string;
   subtitle?: string;
@@ -33,12 +35,19 @@ export interface LeaderboardEntry {
   count: number;
 }
 
-export interface CustomerStageData {
-  key: string;
-  name: string;
-  subtitle: string;
-  value: number;
-  tone: "blue" | "violet" | "amber" | "teal" | "green" | "lime" | "red";
+export interface SalesTrialOverview {
+  periodLabel: string;
+  meetingsBooked: number;
+  meetingsHeld: number;
+  wonFromMeetings: number;
+  closingRate: number;
+  activeTrials: number;
+  trialsStarted: number;
+  trialsResolved: number;
+  trialsWon: number;
+  trialsBounced: number;
+  trialConversionRate: number;
+  trialBounceRate: number;
 }
 
 export interface DashboardData {
@@ -48,25 +57,9 @@ export interface DashboardData {
     arr: KPIData;
     potentialArr: KPIData;
     customersChurned: KPIData;
-    closingRate: KPIData;
-    activeTrials: KPIData;
-    trialConversion: KPIData;
-    trialBounce: KPIData;
   };
-  meetingActivity: {
-    weekly: KPIData;
-    monthly: KPIData;
-    yearly: KPIData;
-  };
+  salesTrialOverview: SalesTrialOverview;
   mrrOverTime: ChartDataPoint[];
   meetingsOverTime: ChartDataPoint[];
-  meetingsBySource: SourceBreakdownItem[];
-  meetingsBookedTotal: number;
   meetingsLeaderboard: LeaderboardEntry[];
-  funnelStages: FunnelStage[];
-  customerLifecycle: {
-    salesStages: CustomerStageData[];
-    customerSuccessStages: CustomerStageData[];
-    trackingMessage: string;
-  };
 }

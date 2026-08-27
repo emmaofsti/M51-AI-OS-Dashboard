@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
   clearCache,
-  fetchContactSourcesForDeals,
   fetchMeetingsForDeals,
   getCachedDashboardData,
   type HubSpotDeal,
@@ -119,12 +118,8 @@ function getDateRange(range: string) {
 
   if (range === "year") {
     const periodStart = osloMidnight(current.year, 1, 1);
-    const prevPeriodStart = osloMidnight(current.year - 1, 1, 1);
-    const prevPeriodEnd = new Date(periodStart.getTime() - 1);
     return {
       periodStart,
-      prevPeriodStart,
-      prevPeriodEnd,
       now,
       year: current.year,
     };
@@ -132,20 +127,11 @@ function getDateRange(range: string) {
 
   const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
   const periodStart = addOsloDays(todayStart, -(days - 1));
-  const prevPeriodEnd = new Date(periodStart.getTime() - 1);
-  const prevPeriodStart = addOsloDays(periodStart, -days);
   return {
     periodStart,
-    prevPeriodStart,
-    prevPeriodEnd,
     now,
     year: current.year,
   };
-}
-
-function percentChange(current: number, previous: number): number {
-  if (previous === 0) return current > 0 ? 100 : 0;
-  return Math.round(((current - previous) / previous) * 1000) / 10;
 }
 
 function historyFor(deal: HubSpotDeal): HubSpotHistoryEntry[] {
@@ -257,71 +243,17 @@ function trialConversionForCohort(
   };
 }
 
-function dealsCreatedInPeriod(
-  deals: HubSpotDeal[],
-  start: Date,
-  end: Date,
-): DealActivity[] {
-  return deals.flatMap((deal) => {
-    if (!deal.properties.createdate) return [];
-    const date = new Date(deal.properties.createdate);
-    return date >= start && date <= end ? [{ deal, date }] : [];
-  });
-}
-
-function categorizeMeetingSource(src: string, d1: string, d2: string): string {
-  if (d1.includes("webinar") || d2.includes("webinar")) return "Webinar";
-  if (
-    d1.includes("seminar") ||
-    d1.includes("konferansen") ||
-    d1.includes("julefest") ||
-    d2.includes("seminar") ||
-    d2.includes("konferanse")
-  ) {
-    return "Seminar / Event";
-  }
-  if (
-    src === "EMAIL_MARKETING" ||
-    d1 === "sequences" ||
-    d1 === "hs_email" ||
-    d1 === "email_integration" ||
-    d2.includes("sequence")
-  ) {
-    return "E-post / Sekvens";
-  }
-  if (src === "PAID_SOCIAL" || src === "PAID_SEARCH") return "Betalt (ads)";
-  if (src === "SOCIAL_MEDIA") return "Sosiale medier";
-  if (src === "ORGANIC_SEARCH" || src === "REFERRALS" || src === "AI_REFERRALS") {
-    return "Inbound";
-  }
-  if (src === "OFFLINE") return "Direkte salg";
-  if (src === "DIRECT_TRAFFIC") return "Direkte kontakt";
-  return "Ukjent";
-}
-
-const SOURCE_COLORS: Record<string, string> = {
-  Webinar: "#3C6E71",
-  "Seminar / Event": "#0EA5E9",
-  "E-post / Sekvens": "#F59E0B",
-  "Betalt (ads)": "#FF3B3D",
-  "Sosiale medier": "#8B5CF6",
-  Inbound: "#10B981",
-  "Direkte salg": "#6366F1",
-  "Direkte kontakt": "#9CA3AF",
-  Ukjent: "#D1D5DB",
-};
-
-function periodText(range: string, year: number) {
+function periodText(range: string, year: number): string {
   if (range === "7d") {
-    return { label: "siste 7 dager", comparison: "mot forrige 7 dager" };
+    return "Siste 7 dager";
   }
   if (range === "90d") {
-    return { label: "siste 90 dager", comparison: "mot forrige 90 dager" };
+    return "Siste 90 dager";
   }
   if (range === "year") {
-    return { label: String(year), comparison: `mot ${year - 1}` };
+    return String(year);
   }
-  return { label: "siste 30 dager", comparison: "mot forrige 30 dager" };
+  return "Siste 30 dager";
 }
 
 function isAiOsDeal(deal: HubSpotDeal): boolean {
@@ -338,8 +270,7 @@ export async function GET(request: NextRequest) {
 
     const range = request.nextUrl.searchParams.get("range") ?? "30d";
     const dealFilter = request.nextUrl.searchParams.get("dealFilter") ?? "all";
-    const { periodStart, prevPeriodStart, prevPeriodEnd, now, year } =
-      getDateRange(range);
+    const { periodStart, now, year } = getDateRange(range);
     const { deals, dealMRR, fetchedAt } = await getCachedDashboardData();
 
     // Every sales metric is scoped to the actual M51 sales pipeline. "Alle"
@@ -351,23 +282,11 @@ export async function GET(request: NextRequest) {
       dealFilter === "ai-os"
         ? salesDeals.filter(isAiOsDeal)
         : salesDeals;
-    const wonThisPeriod = activitiesInPeriod(
-      filteredDeals,
-      WON_STAGES,
-      periodStart,
-      now,
-    );
     const meetingsThisPeriod = activitiesInPeriod(
       filteredDeals,
       MEETING_BOOKED_STAGES,
       periodStart,
       now,
-    );
-    const meetingsPrevPeriod = activitiesInPeriod(
-      filteredDeals,
-      MEETING_BOOKED_STAGES,
-      prevPeriodStart,
-      prevPeriodEnd,
     );
     const dealsWithDocumentedBooking = filteredDeals.filter((deal) =>
       historyFor(deal).some((entry) =>
@@ -385,32 +304,11 @@ export async function GET(request: NextRequest) {
     const meetingsHeldPeriod = heldMeetingActivities.filter(
       ({ date }) => date >= periodStart && date <= now,
     );
-    const meetingsHeldPrev = heldMeetingActivities.filter(
-      ({ date }) => date >= prevPeriodStart && date <= prevPeriodEnd,
-    );
-    const offersSentPeriod = activitiesInPeriod(
-      filteredDeals,
-      OFFER_SENT_STAGES,
-      periodStart,
-      now,
-    );
-    const offersSentPrev = activitiesInPeriod(
-      filteredDeals,
-      OFFER_SENT_STAGES,
-      prevPeriodStart,
-      prevPeriodEnd,
-    );
     const trialsThisPeriod = activitiesInPeriod(
       filteredDeals,
       TRIAL_STAGES,
       periodStart,
       now,
-    );
-    const trialsPrevPeriod = activitiesInPeriod(
-      filteredDeals,
-      TRIAL_STAGES,
-      prevPeriodStart,
-      prevPeriodEnd,
     );
     const activeTrials = filteredDeals.filter((deal) =>
       TRIAL_STAGES.has(deal.properties.dealstage ?? ""),
@@ -429,11 +327,6 @@ export async function GET(request: NextRequest) {
       filteredDeals,
       periodStart,
       now,
-    );
-    const prevTrialConversion = trialConversionForCohort(
-      filteredDeals,
-      prevPeriodStart,
-      prevPeriodEnd,
     );
 
     const documentedMonthlyRevenue = (deal: HubSpotDeal): number => {
@@ -470,16 +363,8 @@ export async function GET(request: NextRequest) {
     const wonFromHeldMeetings = meetingsHeldPeriod.filter(({ deal }) =>
       historyFor(deal).some((entry) => WON_STAGES.has(entry.value)),
     );
-    const wonFromHeldMeetingsPrev = meetingsHeldPrev.filter(({ deal }) =>
-      historyFor(deal).some((entry) => WON_STAGES.has(entry.value)),
-    );
     const closingRate = meetingsHeldPeriod.length
       ? Math.round((wonFromHeldMeetings.length / meetingsHeldPeriod.length) * 100)
-      : 0;
-    const prevClosingRate = meetingsHeldPrev.length
-      ? Math.round(
-          (wonFromHeldMeetingsPrev.length / meetingsHeldPrev.length) * 100,
-        )
       : 0;
 
     const ownerCounts = new Map<string, number>();
@@ -563,68 +448,10 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    let contactSources = new Map<
-      string,
-      { src: string; d1: string; d2: string }
-    >();
-    try {
-      contactSources = await fetchContactSourcesForDeals(
-        meetingsThisPeriod.map(({ deal }) => deal.id),
-      );
-    } catch (error) {
-      console.warn("Contact source fetch failed; using Unknown.", error);
-    }
-
-    const sourceCounts = new Map<string, number>();
-    for (const { deal } of meetingsThisPeriod) {
-      const source = contactSources.get(deal.id);
-      const category = source
-        ? categorizeMeetingSource(source.src, source.d1, source.d2)
-        : "Ukjent";
-      sourceCounts.set(category, (sourceCounts.get(category) ?? 0) + 1);
-    }
-    const meetingsBySource = [...sourceCounts]
-      .map(([name, value]) => ({
-        name,
-        value,
-        color: SOURCE_COLORS[name] ?? SOURCE_COLORS.Ukjent,
-      }))
-      .sort((left, right) => right.value - left.value);
-
-    const leadsThisPeriod = dealsCreatedInPeriod(filteredDeals, periodStart, now);
-
-    // These are independent, documented stage events in the selected period.
-    // They intentionally have no between-stage conversion percentages because
-    // self-serve trials and manually skipped stages are parallel paths.
-    const funnelStages = [
-      {
-        name: "Nye deals",
-        subtitle: "Deals opprettet i perioden",
-        value: leadsThisPeriod.length,
-      },
-      {
-        name: "Møte booket",
-        value: meetingsThisPeriod.length,
-      },
-      {
-        name: "Møte gjennomført",
-        value: meetingsHeldPeriod.length,
-      },
-      {
-        name: "Gratis prøveperiode startet",
-        value: trialsThisPeriod.length,
-      },
-      {
-        name: "Tilbud sendt",
-        value: offersSentPeriod.length,
-      },
-      { name: "Vunnet", value: wonThisPeriod.length },
-    ];
-
-    const { label: periodLabel, comparison: comparisonLabel } = periodText(
-      range,
-      year,
-    );
+    const periodLabel = periodText(range, year);
+    const trialBounceRate = trialConversion.resolved
+      ? Math.round((trialConversion.bounced / trialConversion.resolved) * 100)
+      : 0;
     const dashboardData: DashboardData = {
       lastUpdated: fetchedAt,
       primaryKPIs: {
@@ -652,112 +479,24 @@ export async function GET(request: NextRequest) {
           trend: 0,
           trendLabel: "tidligere vunnet, nå tapt",
         },
-        closingRate: {
-          label: `Closing rate (${periodLabel})`,
-          value: `${closingRate}%`,
-          trend: closingRate - prevClosingRate,
-          trendLabel: `${wonFromHeldMeetings.length} av ${meetingsHeldPeriod.length} gjennomførte møter`,
-        },
-        activeTrials: {
-          label: "Aktive prøveperioder (nå)",
-          value: activeTrials.length.toString(),
-          trend: percentChange(trialsThisPeriod.length, trialsPrevPeriod.length),
-          trendLabel: `${trialsThisPeriod.length} startet ${periodLabel} · ${comparisonLabel}`,
-        },
-        trialConversion: {
-          label: `Trial → vunnet (${periodLabel})`,
-          value: `${trialConversion.rate}%`,
-          trend: trialConversion.rate - prevTrialConversion.rate,
-          trendLabel: `${trialConversion.won} av ${trialConversion.resolved} avgjorte trials`,
-        },
-        trialBounce: {
-          label: `Trial bounce (${periodLabel})`,
-          value: trialConversion.resolved
-            ? `${Math.round((trialConversion.bounced / trialConversion.resolved) * 100)}%`
-            : "0%",
-          trend: prevTrialConversion.resolved
-            ? Math.round(
-                (trialConversion.bounced / Math.max(trialConversion.resolved, 1)) * 100,
-              ) -
-              Math.round(
-                (prevTrialConversion.bounced / prevTrialConversion.resolved) * 100,
-              )
-            : 0,
-          trendLabel: `${trialConversion.bounced} av ${trialConversion.resolved} avgjorte trials`,
-        },
       },
-      meetingActivity: {
-        weekly: {
-          label: `Møte booket (${periodLabel})`,
-          value: meetingsThisPeriod.length.toString(),
-          trend: percentChange(meetingsThisPeriod.length, meetingsPrevPeriod.length),
-          trendLabel: comparisonLabel,
-        },
-        monthly: {
-          label: `Møte gjennomført (${periodLabel})`,
-          value: meetingsHeldPeriod.length.toString(),
-          trend: percentChange(meetingsHeldPeriod.length, meetingsHeldPrev.length),
-          trendLabel: comparisonLabel,
-        },
-        yearly: {
-          label: `Tilbud sendt (${periodLabel})`,
-          value: offersSentPeriod.length.toString(),
-          trend: percentChange(offersSentPeriod.length, offersSentPrev.length),
-          trendLabel: comparisonLabel,
-        },
+      salesTrialOverview: {
+        periodLabel,
+        meetingsBooked: meetingsThisPeriod.length,
+        meetingsHeld: meetingsHeldPeriod.length,
+        wonFromMeetings: wonFromHeldMeetings.length,
+        closingRate,
+        activeTrials: activeTrials.length,
+        trialsStarted: trialsThisPeriod.length,
+        trialsResolved: trialConversion.resolved,
+        trialsWon: trialConversion.won,
+        trialsBounced: trialConversion.bounced,
+        trialConversionRate: trialConversion.rate,
+        trialBounceRate,
       },
       mrrOverTime,
       meetingsOverTime,
-      meetingsBySource,
-      meetingsBookedTotal: meetingsThisPeriod.length,
       meetingsLeaderboard,
-      funnelStages,
-      customerLifecycle: {
-        salesStages: [
-          {
-            key: "meeting",
-            name: "Møte booket",
-            subtitle: "Venter på møte eller neste steg",
-            value: filteredDeals.filter((deal) =>
-              MEETING_BOOKED_STAGES.has(deal.properties.dealstage ?? ""),
-            ).length,
-            tone: "blue",
-          },
-          {
-            key: "trial",
-            name: "Gratis prøveperiode",
-            subtitle: "14 dager – ikke vunnet ennå",
-            value: activeTrials.length,
-            tone: "violet",
-          },
-          {
-            key: "offer",
-            name: "Tilbud sendt",
-            subtitle: "Åpne tilbud som ikke er avgjort",
-            value: filteredDeals.filter((deal) =>
-              OFFER_SENT_STAGES.has(deal.properties.dealstage ?? ""),
-            ).length,
-            tone: "amber",
-          },
-        ],
-        customerSuccessStages: [
-          {
-            key: "active",
-            name: "Aktiv kunde",
-            subtitle: "Vunnet deal med dokumentert MRR",
-            value: activeCustomerDeals.length,
-            tone: "teal",
-          },
-          {
-            key: "churned",
-            name: "Kunder sluttet",
-            subtitle: "Tidligere vunnet deal som nå er tapt",
-            value: churnedCustomerDeals.length,
-            tone: "red",
-          },
-        ],
-        trackingMessage: `${allWonDeals.length - activeCustomerDeals.length} vunne deals mangler dokumentert MRR og er derfor ikke tatt med som aktive kunder. «Kunder sluttet» teller bare deals som først var vunnet og senere ble flyttet til tapt.`,
-      },
     };
 
     return NextResponse.json(dashboardData);

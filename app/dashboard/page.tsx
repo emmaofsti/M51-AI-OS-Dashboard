@@ -5,9 +5,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { KPICard } from "@/components/KPICard";
 import { ChartCard } from "@/components/ChartCard";
-import { FunnelCard } from "@/components/FunnelCard";
-import { SourceCard } from "@/components/SourceCard";
-import { CustomerLifecycleCard } from "@/components/CustomerLifecycleCard";
+import { SalesTrialOverviewCard } from "@/components/SalesTrialOverviewCard";
 import type { DashboardData } from "@/lib/mockData";
 
 function KPISkeleton() {
@@ -153,38 +151,16 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Row 2 — salg og trial */}
+        <section className="mt-6">
+          <SalesTrialOverviewCard data={data.salesTrialOverview} />
+        </section>
+
+        {/* Utvikling over tid */}
         <section className="mt-6">
           <div className="mb-3">
-            <h2 className="text-base font-semibold">Salg og 14 dager gratis</h2>
-            <p className="text-sm text-muted-foreground">Møter, konvertering og frafall i prøveperioden</p>
+            <h2 className="text-base font-semibold">Utvikling over tid</h2>
+            <p className="text-sm text-muted-foreground">MRR og møteaktivitet, uten ekstra mellomregninger</p>
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-            {loading ? (
-              Array(6).fill(null).map((_, i) => <KPISkeleton key={i} />)
-            ) : (
-              <>
-                <KPICard data={data.meetingActivity.weekly} />
-                <KPICard data={data.primaryKPIs.closingRate} />
-                <KPICard data={data.primaryKPIs.activeTrials} />
-                <KPICard data={data.primaryKPIs.trialConversion} />
-                <KPICard data={data.primaryKPIs.trialBounce} />
-                <KPICard data={data.meetingActivity.monthly} />
-              </>
-            )}
-          </div>
-        </section>
-
-        <section className="mt-6">
-          <CustomerLifecycleCard
-            salesStages={data.customerLifecycle.salesStages}
-            customerSuccessStages={data.customerLifecycle.customerSuccessStages}
-            trackingMessage={data.customerLifecycle.trackingMessage}
-          />
-        </section>
-
-        {/* Row 3 — Revenue + Meetings charts */}
-        <section className="mt-6">
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <ChartCard
               title={`Ny MRR per måned (${new Date().getFullYear()})`}
@@ -236,18 +212,6 @@ export default function DashboardPage() {
                 </div>
               )}
             </div>
-          </div>
-        </section>
-
-        {/* Row 4 — Meeting source + Sales Funnel */}
-        <section className="mt-6">
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <SourceCard
-              title="Kilde til møtebookinger"
-              items={data.meetingsBySource}
-              total={loading ? 0 : data.meetingsBySource.reduce((s, i) => s + i.value, 0)}
-            />
-            <FunnelCard title="Registrerte salgssteg i perioden" stages={data.funnelStages} />
           </div>
         </section>
 
