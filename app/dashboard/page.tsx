@@ -18,6 +18,21 @@ function KPISkeleton() {
   );
 }
 
+function isDashboardData(value: unknown): value is DashboardData {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<DashboardData>;
+  return Boolean(
+    candidate.primaryKPIs?.mrr &&
+      candidate.primaryKPIs?.arr &&
+      candidate.primaryKPIs?.potentialArr &&
+      candidate.primaryKPIs?.customersChurned &&
+      candidate.salesTrialOverview &&
+      Array.isArray(candidate.mrrOverTime) &&
+      Array.isArray(candidate.meetingsOverTime) &&
+      Array.isArray(candidate.meetingsLeaderboard),
+  );
+}
+
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [isLive, setIsLive] = useState(false);
@@ -37,9 +52,11 @@ export default function DashboardPage() {
     try {
       const url = `/api/dashboard-data?range=${dateRange}&dealFilter=${dealFilter}${forceRefresh ? "&refresh=true" : ""}`;
       const res = await fetch(url, { signal });
-      if (!res.ok) throw new Error("API error");
       const json = await res.json();
-      if (json.error) throw new Error(json.error);
+      if (!res.ok || json.error) throw new Error(json.error ?? "API error");
+      if (!isDashboardData(json)) {
+        throw new Error("Dashboard API returned an unexpected data format");
+      }
       setData(json);
       setIsLive(true);
     } catch (err: unknown) {
