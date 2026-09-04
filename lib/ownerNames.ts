@@ -11,4 +11,5 @@ export const OWNER_NAMES: Record<string, string> = {
   "78966808":  "Sebastian",
   "224568206": "Emma",
   "97198504":  "Hedda",
+  "98258364":  "Vilde",
 };
